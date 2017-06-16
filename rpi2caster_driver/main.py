@@ -34,12 +34,13 @@ DEFAULT_REBOOT_GPIO = 23  # reboot button input, pulled up
 DEFAULT_STOP_GPIO = 22  # emergency stop button input, pulled up
 DEFAULT_LED_GPIO = 18  # "system ready" LED output
 
-# Default timeouts
+# Default timings
 DEFAULT_CASTING_STARTUP_TIMEOUT = 30  # during startup rotation check
 DEFAULT_CASTING_SENSOR_TIMEOUT = 5  # during normal casting
 DEFAULT_CASTING_PUMP_STOP_TIMEOUT = 120  # during pump stop
 DEFAULT_PUNCHING_ON_TIME = 0.2  # how long to keep the air flowing / punches up
 DEFAULT_PUNCHING_OFF_TIME = 0.3  # how long to wait before next combination
+DEFAULT_DEBOUNCE_TIME = 25  # milliseconds for software de-bouncing
 
 # Status symbols for convenience
 AIR_ON, AIR_OFF = True, False
@@ -88,7 +89,8 @@ class SysfsSensor:
 
     def __init__(self, gpio):
         self.gpio = gpio
-        self.bounce_time = CFG['Control'].getfloat('bounce_time') * 0.001
+        self.bounce_time = CFG['Control'].getfloat(
+            'bounce_time', fallback=DEFAULT_DEBOUNCE_TIME) * 0.001
         self.setup()
 
     def wait_for(self, new_state, timeout):
@@ -184,7 +186,8 @@ class RPiGPIOSensor:
 
     def __init__(self, gpio):
         self.gpio = gpio
-        self.bounce_time = CFG['Control'].getfloat('bounce_time')
+        self.bounce_time = CFG['Control'].getfloat(
+            'bounce_time', fallback=DEFAULT_DEBOUNCE_TIME)
         self.setup()
 
     def setup(self):
@@ -532,7 +535,7 @@ def send_signals(prefix):
     try:
         interface = INTERFACES[prefix]
         signals = request.json.get('signals')
-        return jsonify(interface.send(signals))
+        return jsonify(interface.send_signals(signals))
     except KeyError:
         abort(404)
 
