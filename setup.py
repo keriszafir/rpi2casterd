@@ -1,16 +1,16 @@
 from setuptools import setup
-from rpi2caster_driver import __version__, __author__, __author_email__, __github_url__
+from rpi2caster_driver import metadata
 
 with open('README.rst', 'r') as readme_file:
     long_description = readme_file.read()
 
 setup(name='rpi2caster_driver',
-      version=__version__,
+      version=metadata.version,
       description='Raspberry Pi GPIO setup utility for rpi2caster',
       long_description=long_description,
-      url=__github_url__,
-      author=__author__,
-      author_email=__author_email__,
+      url=metadata.github_url,
+      author=metadata.author,
+      author_email=metadata.author_email,
       license='MIT',
       packages=['rpi2caster_driver'],
       include_package_data=True,

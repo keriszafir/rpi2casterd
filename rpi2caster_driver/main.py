@@ -533,7 +533,7 @@ class Interface:
             return dict(success=True, signals=codes)
 
 
-class Controller:
+class Daemon:
     """Configure the "ready" LED and shutdown/reboot buttons"""
     def __init__(self):
         config = CFG['Control']
@@ -599,17 +599,17 @@ def setup():
             INTERFACES[interface_id] = interface
 
     # setup the LED and shutdown/reboot buttons
-    return Controller()
+    return Daemon()
 
 
 @handle_exceptions
 def main():
     """Starts the application"""
+    setup()
     host = CFG['Control'].get('host', fallback=DEFAULT_ADDRESS)
     port = CFG['Control'].getint('port', fallback=DEFAULT_PORT)
     APP.run(host, port)
 
 
-CONTROLLER = setup()
 if __name__ == '__main__':
     main()
