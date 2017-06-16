@@ -8,7 +8,7 @@ def str_list(input_string):
 
 def int_list(input_string):
     """Convert '1,2,3,4,5' -> [1, 2, 3, 4, 5]"""
-    return [int(x.strip() for x in input_string.split(','))]
+    return [int(x.strip()) for x in input_string.split(',')]
 
 
 def convert_hmn(signals):
