@@ -463,11 +463,14 @@ class Interface:
 def teardown():
     """Unregister the exported GPIOs"""
     # cleanup the registered interfaces
-    for interface_id, interface in INTERFACES.items():
+    # ugly-iterate over a list of keys because we mutate the dict
+    interface_ids = [i for i in INTERFACES]
+    for interface_id in interface_ids:
+        interface = INTERFACES[interface_id]
         interface.valves_off()
         INTERFACES.pop(interface_id)
     # cleanup the registered GPIOs
-    for gpio_number in GPIOS:
+    for gpio_number in GPIOS[:]:
         with io.open('/sys/class/gpio/unexport', 'w') as unexport_file:
             unexport_file.write(str(gpio_number))
         GPIOS.pop(gpio_number)
