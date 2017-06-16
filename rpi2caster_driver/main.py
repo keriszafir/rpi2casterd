@@ -306,9 +306,9 @@ class Interface:
     busy, pump_working = False, False
     current_signals = []
 
-    def __init__(self, interface_name):
+    def __init__(self, config_section):
         # get the interface configuration
-        self.config = CFG[interface_name]
+        self.config = config_section
         self.hardware_setup()
 
     @property
@@ -593,7 +593,7 @@ def setup():
     for section in CFG.sections():
         section_name = section.lower().strip()
         if section_name.startswith('interface'):
-            interface = Interface(section_name)
+            interface = Interface(CFG[section])
             # register this interface and keep a reference to it
             interface_id = section_name.replace('interface', '').strip()
             INTERFACES[interface_id] = interface
