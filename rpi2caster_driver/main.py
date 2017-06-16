@@ -102,7 +102,7 @@ def handle_exceptions(routine):
     return wrapper
 
 
-@APP.route('/interfaces', method=('GET',))
+@APP.route('/interfaces', methods=('GET',))
 def list_interfaces():
     """Lists available interfaces"""
     return jsonify([i for i in INTERFACES])
