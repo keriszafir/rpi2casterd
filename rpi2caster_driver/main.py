@@ -148,7 +148,7 @@ def stop_machine(prefix):
         abort(404)
 
 
-@APP.route('/interfaces/<prefix>/send', methods=('POST'))
+@APP.route('/interfaces/<prefix>/send', methods=('POST',))
 def send_signals(prefix):
     """Sends the signals to the machine"""
     try:
