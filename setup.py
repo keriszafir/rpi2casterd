@@ -23,5 +23,5 @@ setup(name='rpi2caster_driver',
                    'Operating System :: POSIX :: Linux',
                    'Programming Language :: Python :: 3 :: Only',],
       entry_points={'console_scripts':['rpi2caster-driver = rpi2caster_driver.main:main']},
-      install_requires=['RPi.GPIO, flask'],
+      install_requires=['RPi.GPIO', 'flask'],
       zip_safe=True)
