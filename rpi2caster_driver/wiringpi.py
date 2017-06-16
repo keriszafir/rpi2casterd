@@ -13,10 +13,11 @@ class WiringPiOutput:
         # Set up an output interface on two MCP23017 chips
         wiringpi.mcp23017Setup(self.pin_base, mcp0_address)
         wiringpi.mcp23017Setup(self.pin_base + 16, mcp1_address)
-        WiringPiOutput.pin_base += 32
         # map signals to outputs
         signal_numbers = [*range(self.pin_base, self.pin_base+32)]
         self.mapping = dict(zip(signals, signal_numbers))
+        # update the pin base for possible additional interfaces
+        WiringPiOutput.pin_base += 32
         # Set all I/O lines on MCP23017s as outputs - mode=1
         for pin in self.mapping.values():
             wiringpi.pinMode(pin, 1)

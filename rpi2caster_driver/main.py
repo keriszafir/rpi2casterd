@@ -414,7 +414,8 @@ class Interface:
                        ROW16_KMN: converters.convert_kmn,
                        ROW16_UNITSHIFT: converters.convert_unitshift}
         conversion = conversions[self.row16_mode]
-        codes = signals if self.mode == TESTING else conversion(signals)
+        _signals = signals.upper()
+        codes = _signals if self.mode == TESTING else conversion(_signals)
         self.current_signals = codes
         if self.mode == CASTING:
             # casting: sensor-driven valves on and off

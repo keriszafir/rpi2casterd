@@ -12,7 +12,7 @@ except ImportError:
 # Output latch registers for SMBus MCP23017 control
 OLATA, OLATB = 0x14, 0x15
 # Port direction registers for SMBus MCP23017 control
-IODIRA, IODIRB = 0x00, 0x10
+IODIRA, IODIRB = 0x00, 0x01
 
 
 class SMBusOutput:
