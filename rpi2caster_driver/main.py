@@ -72,97 +72,6 @@ GPIO.setmode(GPIO.BCM)
 APP = Flask(__name__)
 
 
-def teardown():
-    """Unregister the exported GPIOs"""
-    for gpio_number in GPIOS:
-        with io.open('/sys/class/gpio/unexport', 'w') as unexport_file:
-            unexport_file.write(str(gpio_number))
-    GPIO.cleanup()
-
-
-def handle_exceptions(routine):
-    """Run a routine with exception handling"""
-    @functools.wraps(routine)
-    def wrapper(*args, **kwargs):
-        """wraps the routine"""
-        try:
-            return routine(*args, **kwargs)
-
-        except (OSError, PermissionError, RuntimeError):
-            print('ERROR: You must run this program as root!')
-
-        except KeyboardInterrupt:
-            print('System exit.')
-
-        finally:
-            # make sure the GPIOs are de-configured properly
-            teardown()
-    return wrapper
-
-
-@APP.route('/interfaces', methods=('GET',))
-def list_interfaces():
-    """Lists available interfaces"""
-    return jsonify([i for i in INTERFACES])
-
-
-@APP.route('/interfaces/<prefix>/config', methods=('GET', 'POST'))
-def configuration(prefix):
-    """GET: reads the interface configuration,
-    POST: changes the configuration"""
-    try:
-        interface = INTERFACES[prefix]
-        if request.method == 'GET':
-            return jsonify(interface.get_config())
-        elif request.method == 'POST':
-            return jsonify(interface.set_config(request.json))
-    except KeyError:
-        abort(404)
-
-
-@APP.route('/interfaces/<prefix>/status')
-def get_status(prefix):
-    """Gets the current interface status"""
-    try:
-        interface = INTERFACES[prefix]
-        return jsonify(interface.status())
-    except KeyError:
-        abort(404)
-
-
-@APP.route('/interfaces/<prefix>/start')
-def start_machine(prefix):
-    """Starts the machine"""
-    try:
-        interface = INTERFACES[prefix]
-        return jsonify(interface.start())
-    except KeyError:
-        # the interface does not exist
-        abort(404)
-
-
-@APP.route('/interfaces/<prefix>/stop')
-def stop_machine(prefix):
-    """Stops the machine"""
-    try:
-        interface = INTERFACES[prefix]
-        return jsonify(interface.stop())
-    except KeyError:
-        # the interface does not exist
-        abort(404)
-
-
-@APP.route('/interfaces/<prefix>/send', methods=('POST',))
-def send_signals(prefix):
-    """Sends the signals to the machine"""
-    try:
-        interface = INTERFACES[prefix]
-        signals = request.json.get('signals')
-        return jsonify(interface.send(signals))
-    except KeyError:
-        abort(404)
-
-
 class HWConfigError(Exception):
     """configuration error: wrong name or cannot import module"""
 
@@ -537,6 +446,97 @@ class Interface:
             return dict(success=True, signals=codes)
 
 
+def teardown():
+    """Unregister the exported GPIOs"""
+    for gpio_number in GPIOS:
+        with io.open('/sys/class/gpio/unexport', 'w') as unexport_file:
+            unexport_file.write(str(gpio_number))
+    GPIO.cleanup()
+
+
+def handle_exceptions(routine):
+    """Run a routine with exception handling"""
+    @functools.wraps(routine)
+    def wrapper(*args, **kwargs):
+        """wraps the routine"""
+        try:
+            return routine(*args, **kwargs)
+
+        except (OSError, PermissionError, RuntimeError):
+            print('ERROR: You must run this program as root!')
+
+        except KeyboardInterrupt:
+            print('System exit.')
+
+        finally:
+            # make sure the GPIOs are de-configured properly
+            teardown()
+    return wrapper
+
+
+@APP.route('/interfaces', methods=('GET',))
+def list_interfaces():
+    """Lists available interfaces"""
+    return jsonify([i for i in INTERFACES])
+
+
+@APP.route('/interfaces/<prefix>/config', methods=('GET', 'POST'))
+def configuration(prefix):
+    """GET: reads the interface configuration,
+    POST: changes the configuration"""
+    try:
+        interface = INTERFACES[prefix]
+        if request.method == 'GET':
+            return jsonify(interface.get_config())
+        elif request.method == 'POST':
+            return jsonify(interface.set_config(request.json))
+    except KeyError:
+        abort(404)
+
+
+@APP.route('/interfaces/<prefix>/status')
+def get_status(prefix):
+    """Gets the current interface status"""
+    try:
+        interface = INTERFACES[prefix]
+        return jsonify(interface.status())
+    except KeyError:
+        abort(404)
+
+
+@APP.route('/interfaces/<prefix>/start')
+def start_machine(prefix):
+    """Starts the machine"""
+    try:
+        interface = INTERFACES[prefix]
+        return jsonify(interface.start())
+    except KeyError:
+        # the interface does not exist
+        abort(404)
+
+
+@APP.route('/interfaces/<prefix>/stop')
+def stop_machine(prefix):
+    """Stops the machine"""
+    try:
+        interface = INTERFACES[prefix]
+        return jsonify(interface.stop())
+    except KeyError:
+        # the interface does not exist
+        abort(404)
+
+
+@APP.route('/interfaces/<prefix>/send', methods=('POST',))
+def send_signals(prefix):
+    """Sends the signals to the machine"""
+    try:
+        interface = INTERFACES[prefix]
+        signals = request.json.get('signals')
+        return jsonify(interface.send(signals))
+    except KeyError:
+        abort(404)
+
+
 def daemon_setup():
     """Configure the "ready" LED and shutdown/reboot buttons"""
     def shutdown(*_):
@@ -544,7 +544,7 @@ def daemon_setup():
         print('Shutdown button pressed. Hold down for 2s to shut down...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not GPIO.input(shutdown_gpio):
+        if not GPIO.input(shdn_gpio):
             print('Shutting down...')
             blink()
             subprocess.run(['shutdown', '-h', 'now'])
@@ -577,14 +577,14 @@ def daemon_setup():
     GPIO.setup(led_gpio, GPIO.OUT)
     GPIO.output(led_gpio, 1)
     # set the buttons up
-    shutdown_gpio = config.getint('shutdown_gpio', fallback=DEFAULT_SHDN_GPIO)
+    shdn_gpio = config.getint('shutdown_gpio', fallback=DEFAULT_SHDN_GPIO)
     reboot_gpio = config.getint('reboot_gpio', fallback=DEFAULT_REBOOT_GPIO)
-    GPIO.setup(shutdown_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.setup(shdn_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     # register callbacks for shutdown and reboot
     event_detect = GPIO.add_event_detect
-    event_detect(shutdown_gpio, GPIO.RISING, callback=shutdown, bouncetime=200)
-    event_detect(reboot_gpio, GPIO.RISING, callback=reboot, bouncetime=200)
+    event_detect(shdn_gpio, GPIO.FALLING, callback=shutdown, bouncetime=200)
+    event_detect(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=200)
     # Register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
