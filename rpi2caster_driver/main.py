@@ -371,11 +371,11 @@ class Interface:
 
     def stop(self):
         """Stop the machine."""
-        self.output.valves_off()
+        self.valves_off()
         if self.mode == CASTING:
             self.pump_stop()
         # cut the air off in all modes
-        self.output.valves_off()
+        self.valves_off()
         self.busy = False
         return dict(success=True)
 
@@ -397,6 +397,17 @@ class Interface:
             timeout = self.timings['casting_pump_stop_timeout']
             self.send_signals(PUMP_STOP, timeout=timeout)
 
+    def valves_off(self):
+        """Turn all valves off"""
+        self.output.valves_off()
+        return dict(success=True)
+
+    def valves_on(self, signals):
+        """proxy for output's valves_on method"""
+        _signals = [str(s).upper() for s in signals]
+        self.output.valves_on(_signals)
+        return dict(success=True)
+
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         Based on mode:
@@ -414,16 +425,15 @@ class Interface:
                        ROW16_KMN: converters.convert_kmn,
                        ROW16_UNITSHIFT: converters.convert_unitshift}
         conversion = conversions[self.row16_mode]
-        _signals = signals.upper()
-        codes = _signals if self.mode == TESTING else conversion(_signals)
+        codes = signals if self.mode == TESTING else conversion(signals)
         self.current_signals = codes
         if self.mode == CASTING:
             # casting: sensor-driven valves on and off
             try:
                 self.sensor.wait_for(AIR_ON, timeout=timeout)
-                self.output.valves_on(codes)
+                self.valves_on(codes)
                 self.sensor.wait_for(AIR_OFF, timeout=timeout)
-                self.output.valves_off()
+                self.valves_off()
                 self.pump_working = self.check_pump()
                 return dict(success=True, signals=codes)
             except MachineStopped:
@@ -432,29 +442,35 @@ class Interface:
                 return dict(success=False, error='machine_stopped')
         elif self.mode == PUNCHING and self.manual_advance:
             # semi-automatic perforator (advanced by keypress)
-            self.output.valves_off()
+            self.valves_off()
             time.sleep(self.timings['punching_off_time'])
-            self.output.valves_on(codes)
+            self.valves_on(codes)
             return dict(success=True, signals=codes)
         elif self.mode == PUNCHING:
             # timer-driven perforator
-            self.output.valves_on(codes)
+            self.valves_on(codes)
             time.sleep(self.timings['punching_on_time'])
-            self.output.valves_off(codes)
+            self.valves_off()
             time.sleep(self.timings['punching_off_time'])
             return dict(success=True, signals=codes)
         else:
             # testing mode
-            self.output.valves_off()
-            self.output.valves_on(codes)
+            self.valves_off()
+            self.valves_on(codes)
             return dict(success=True, signals=codes)
 
 
 def teardown():
     """Unregister the exported GPIOs"""
+    # cleanup the registered interfaces
+    for interface_id, interface in INTERFACES.items():
+        interface.valves_off()
+        INTERFACES.pop(interface_id)
+    # cleanup the registered GPIOs
     for gpio_number in GPIOS:
         with io.open('/sys/class/gpio/unexport', 'w') as unexport_file:
             unexport_file.write(str(gpio_number))
+        GPIOS.pop(gpio_number)
     GPIO.cleanup()
 
 
@@ -537,6 +553,27 @@ def send_signals(prefix):
         interface = INTERFACES[prefix]
         signals = request.json.get('signals')
         return jsonify(interface.send_signals(signals))
+    except KeyError:
+        abort(404)
+
+
+@APP.route('/interfaces/<prefix>/valves_on', methods=('POST',))
+def valves_on(prefix):
+    """Turns specified valves on. Low-level control method."""
+    try:
+        interface = INTERFACES[prefix]
+        signals = request.json.get('signals')
+        return jsonify(interface.valves_on(signals))
+    except KeyError:
+        abort(404)
+
+
+@APP.route('/interfaces/<prefix>/valves_off')
+def valves_off(prefix):
+    """Turns all valves off on the interface."""
+    try:
+        interface = INTERFACES[prefix]
+        return jsonify(interface.valves_off())
     except KeyError:
         abort(404)
 

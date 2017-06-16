@@ -21,7 +21,7 @@ def convert_hmn(signals):
     # {ABCDEFGIJKL} -> add HM -> HM{ABCDEFGIJKL}
 
     # earlier rows than 16 won't trigger the attachment -> early return
-    signals_set = set(signals)
+    signals_set = {str(s).upper() for s in signals}
     for i in range(1, 16):
         if str(i) in signals_set:
             return signals_set
@@ -47,7 +47,7 @@ def convert_kmn(signals):
     # {ABCDEFGHIJL} -> add KM -> KM{ABCDEFGHIJL}
 
     # earlier rows than 16 won't trigger the attachment -> early return
-    signals_set = set(signals)
+    signals_set = {str(s).upper() for s in signals}
     for i in range(1, 16):
         if str(i) in signals_set:
             return signals_set
@@ -66,7 +66,7 @@ def convert_kmn(signals):
 def convert_unitshift(signals):
     """Unit-shift addressing mode - rather common,
     designed by Monotype and introduced in 1963"""
-    signals_set = set(signals)
+    signals_set = {str(s).upper() for s in signals}
     if 'D' in signals_set:
         # when the attachment is on, the D signal is routed
         # to unit-shift activation piston instead of column D air pin
@@ -79,4 +79,3 @@ def convert_unitshift(signals):
         signals_set.update('D')
         signals_set.discard('16')
     return signals_set
-
