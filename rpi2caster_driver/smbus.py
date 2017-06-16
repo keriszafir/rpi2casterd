@@ -2,7 +2,12 @@
 """SMBus backend for rpi2caster-driver"""
 
 from functools import reduce
-from smbus import SMBus
+try:
+    # smbus-cffi
+    from smbus import SMBus
+except ImportError:
+    # smbus2
+    from smbus2 import SMBus
 
 # Output latch registers for SMBus MCP23017 control
 OLATA, OLATB = 0x14, 0x15
