@@ -175,7 +175,7 @@ class SysfsSensor:
 
     def __init__(self, gpio):
         self.gpio = gpio
-        self.bounce_time = CFG['control'].getfloat('bounce_time') * 0.001
+        self.bounce_time = CFG['Control'].getfloat('bounce_time') * 0.001
         self.setup()
 
     def wait_for(self, new_state, timeout):
