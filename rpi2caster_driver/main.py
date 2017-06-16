@@ -271,7 +271,7 @@ class RPiGPIOSensor:
 
     def __init__(self, gpio):
         self.gpio = gpio
-        self.bounce_time = CFG['control'].getfloat('bounce_time')
+        self.bounce_time = CFG['Control'].getfloat('bounce_time')
         self.setup()
 
     def setup(self):
