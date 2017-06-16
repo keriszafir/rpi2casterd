@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """hardware drivers for rpi2caster"""
 
-import atexit
 import configparser
 import io
 import functools
@@ -73,7 +72,6 @@ GPIO.setmode(GPIO.BCM)
 APP = Flask(__name__)
 
 
-@atexit.register
 def teardown():
     """Unregister the exported GPIOs"""
     for gpio_number in GPIOS:
@@ -545,7 +543,8 @@ def daemon_setup():
         """Shut the system down"""
         print('Shutdown button pressed. Hold down for 2s to shut down...')
         time.sleep(2)
-        if GPIO.input(shutdown_gpio):
+        # the button is between GPIO and GND i.e. pulled up - negative logic
+        if not GPIO.input(shutdown_gpio):
             print('Shutting down...')
             blink()
             subprocess.run(['shutdown', '-h', 'now'])
@@ -554,7 +553,8 @@ def daemon_setup():
         """Restart the system"""
         print('Reboot button pressed. Hold down for 2s to reboot...')
         time.sleep(2)
-        if GPIO.input(reboot_gpio):
+        # the button is between GPIO and GND i.e. pulled up - negative logic
+        if not GPIO.input(reboot_gpio):
             print('Rebooting...')
             blink()
             subprocess.run(['shutdown', '-r', 'now'])
