@@ -15,7 +15,7 @@ from flask import Flask, abort, jsonify
 from flask.globals import request
 import RPi.GPIO as GPIO
 
-import .converters
+import rpi2caster_driver.converters as converters
 
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2caster-driver.conf'
