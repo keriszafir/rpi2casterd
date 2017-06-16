@@ -425,9 +425,9 @@ class Interface:
             signals = self.config.getlist('signals', fallback=[]) or SIGNALS
             output_name = CFG['Control'].get('output', 'smbus').lower()
             if output_name == 'smbus':
-                from .smbus import SMBusOutput as output
+                from rpi2caster_driver.smbus import SMBusOutput as output
             elif output_name == 'wiringpi':
-                from .wiringpi import WiringPiOutput as output
+                from rpi2caster_driver.wiringpi import WiringPiOutput as output
             self.output = output(signals, mcp0_address, mcp1_address, i2c_bus)
         except NameError:
             raise HWConfigError('Unknown output: {}.'.format(output_name))
