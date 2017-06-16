@@ -1,5 +1,5 @@
 from setuptools import setup
-from .rpi2caster_driver import __version__, __author__, __author_email__, __github_url__
+from rpi2caster_driver import __version__, __author__, __author_email__, __github_url__
 
 with open('README.rst', 'r') as readme_file:
     long_description = readme_file.read()
