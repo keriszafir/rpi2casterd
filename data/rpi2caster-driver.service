@@ -1,0 +1,10 @@
+[Unit]
+Description=rpi2caster-driver hardware interface control daemon for rpi2caster
+After=ssh.service
+
+[Service]
+ExecStart=/usr/local/bin/rpi2caster-driver
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target
