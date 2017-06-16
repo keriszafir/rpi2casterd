@@ -102,6 +102,12 @@ def handle_exceptions(routine):
     return wrapper
 
 
+@APP.route('/interfaces', method=('GET',))
+def list_interfaces():
+    """Lists available interfaces"""
+    return jsonify([i for i in INTERFACES])
+
+
 @APP.route('/interfaces/<prefix>/config', methods=('GET', 'POST'))
 def configuration(prefix):
     """GET: reads the interface configuration,
@@ -533,61 +539,60 @@ class Interface:
             return dict(success=True, signals=codes)
 
 
-class Daemon:
+@handle_exceptions
+def daemon_setup():
     """Configure the "ready" LED and shutdown/reboot buttons"""
-    def __init__(self):
-        config = CFG['Control']
-        self.led_gpio = config.getint('led_gpio', DEFAULT_LED_GPIO)
-        GPIO.setup(self.led_gpio, GPIO.OUT)
-        GPIO.output(self.led_gpio, 1)
-        # set the buttons up
-        self.shutdown_gpio = config.getint('shutdown_gpio', DEFAULT_SHDN_GPIO)
-        self.reboot_gpio = config.getint('reboot_gpio', DEFAULT_REBOOT_GPIO)
-        GPIO.setup(self.shutdown_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(self.reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        # register callbacks for shutdown and reboot
-        GPIO.add_event_detect(self.shutdown_gpio, GPIO.RISING,
-                              callback=self.shutdown, bouncetime=200)
-        GPIO.add_event_detect(self.reboot_gpio, GPIO.RISING,
-                              callback=self.reboot, bouncetime=200)
-        # Register callbacks for signal handlers
-        signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTERM, self.signal_handler)
-
-    def shutdown(self, *_):
+    def shutdown(*_):
         """Shut the system down"""
         print('Shutdown button pressed. Hold down for 2s to shut down...')
         time.sleep(2)
-        if GPIO.input(self.shutdown_gpio):
+        if GPIO.input(shutdown_gpio):
             print('Shutting down...')
-            self.blink()
+            blink()
             subprocess.run(['shutdown', '-h', 'now'])
 
-    def reboot(self, *_):
+    def reboot(*_):
         """Restart the system"""
         print('Reboot button pressed. Hold down for 2s to reboot...')
         time.sleep(2)
-        if GPIO.input(self.reboot_gpio):
+        if GPIO.input(reboot_gpio):
             print('Rebooting...')
-            self.blink()
+            blink()
             subprocess.run(['shutdown', '-r', 'now'])
 
-    def blink(self, seconds=0.5, number=3):
+    def blink(seconds=0.5, number=3):
         """Blinks the LED"""
         for _ in range(number):
-            GPIO.output(self.led_gpio, 0)
+            GPIO.output(led_gpio, 0)
             time.sleep(seconds)
-            GPIO.output(self.led_gpio, 1)
+            GPIO.output(led_gpio, 1)
             time.sleep(seconds)
 
-    @staticmethod
     def signal_handler(*_):
         """Exit gracefully if SIGINT or SIGTERM received"""
         raise KeyboardInterrupt
 
+    config = CFG['Control']
+    # set the LED up
+    led_gpio = config.getint('led_gpio', DEFAULT_LED_GPIO)
+    GPIO.setup(led_gpio, GPIO.OUT)
+    GPIO.output(led_gpio, 1)
+    # set the buttons up
+    shutdown_gpio = config.getint('shutdown_gpio', fallback=DEFAULT_SHDN_GPIO)
+    reboot_gpio = config.getint('reboot_gpio', fallback=DEFAULT_REBOOT_GPIO)
+    GPIO.setup(shutdown_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.setup(reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    # register callbacks for shutdown and reboot
+    event_detect = GPIO.add_event_detect
+    event_detect(shutdown_gpio, GPIO.RISING, callback=shutdown, bouncetime=200)
+    event_detect(reboot_gpio, GPIO.RISING, callback=reboot, bouncetime=200)
+    # Register callbacks for signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
 
 @handle_exceptions
-def setup():
+def interface_setup():
     """Setup the interfaces"""
     # greedily instantiate the interfaces
     for section in CFG.sections():
@@ -598,14 +603,12 @@ def setup():
             interface_id = section_name.replace('interface', '').strip()
             INTERFACES[interface_id] = interface
 
-    # setup the LED and shutdown/reboot buttons
-    return Daemon()
-
 
 @handle_exceptions
 def main():
     """Starts the application"""
-    setup()
+    daemon_setup()
+    interface_setup()
     host = CFG['Control'].get('host', fallback=DEFAULT_ADDRESS)
     port = CFG['Control'].getint('port', fallback=DEFAULT_PORT)
     APP.run(host, port)
