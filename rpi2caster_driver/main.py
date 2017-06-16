@@ -539,7 +539,6 @@ class Interface:
             return dict(success=True, signals=codes)
 
 
-@handle_exceptions
 def daemon_setup():
     """Configure the "ready" LED and shutdown/reboot buttons"""
     def shutdown(*_):
@@ -591,7 +590,6 @@ def daemon_setup():
     signal.signal(signal.SIGTERM, signal_handler)
 
 
-@handle_exceptions
 def interface_setup():
     """Setup the interfaces"""
     # greedily instantiate the interfaces
