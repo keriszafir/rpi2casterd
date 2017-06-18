@@ -35,7 +35,7 @@ def handle_request(routine):
 @APP.route('/interfaces', methods=('GET',))
 def list_interfaces():
     """Lists available interfaces"""
-    return {i: interface.name for (i, interface) in INTERFACES.items()}
+    return jsonify({i: interface.name for i, interface in INTERFACES.items()})
 
 
 @APP.route('/interfaces/<prefix>/config', methods=('GET', 'POST'))
