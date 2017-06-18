@@ -11,8 +11,8 @@ import subprocess
 import time
 import RPi.GPIO as GPIO
 
-import rpi2caster_driver.converters as converters
-from rpi2caster_driver.webapi import INTERFACES, APP
+from rpi2caster_driver import converters as cv
+from .webapi import INTERFACES, APP
 
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2caster-driver.conf'
@@ -20,8 +20,7 @@ DEFAULTS = dict(listen_address='127.0.0.1:23017',
                 sensor_driver='rpi_gpio', output_driver='smbus',
                 shutdown_gpio='24', shutdown_command='shutdown -h now',
                 reboot_gpio='23', reboot_command='shutdown -r now',
-                casting_startup_timeout='30',
-                casting_sensor_timeout='5',
+                startup_timeout='30', sensor_timeout='5',
                 pump_stop_timeout='120',
                 punching_on_time='0.2', punching_off_time='0.3',
                 input_bounce_time='0.025',
@@ -33,10 +32,7 @@ DEFAULTS = dict(listen_address='127.0.0.1:23017',
                 valve4='9,10,11,12,13,14,0005,O15',
                 supported_modes='0,1,2,3',
                 supported_row16_modes='0,1,2,3')
-CONVERTERS = {'signals': converters.sig_list, 'intlist': converters.int_list,
-              'int': int, 'float': float}
-CFG = configparser.ConfigParser(defaults=DEFAULTS, converters=CONVERTERS,
-                                default_section='default')
+CFG = configparser.ConfigParser(defaults=DEFAULTS)
 CFG.read(CONFIGURATION_PATH)
 
 # Status symbols for convenience
@@ -324,7 +320,7 @@ class Interface:
 
     def check_rotation(self):
         """Check whether the machine is turning. Measure the speed."""
-        timeout = self.config['casting_startup_timeout']
+        timeout = self.config['startup_timeout']
         cycles = 3
         try:
             start_time = time.time()
@@ -366,13 +362,13 @@ class Interface:
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        timeout = timeout or self.config['casting_sensor_timeout']
+        timeout = timeout or self.config['sensor_timeout']
         mode, row16_mode = self.config['mode'], self.config['row16_mode']
         # first adjust the signals based on the row16 addressing mode
         conversions = {ROW16_OFF: lambda x: x,
-                       ROW16_HMN: converters.convert_hmn,
-                       ROW16_KMN: converters.convert_kmn,
-                       ROW16_UNITSHIFT: converters.convert_unitshift}
+                       ROW16_HMN: cv.convert_hmn,
+                       ROW16_KMN: cv.convert_kmn,
+                       ROW16_UNITSHIFT: cv.convert_unitshift}
         conversion = conversions[row16_mode]
         codes = signals if mode == TESTING else conversion(signals)
         self.status.update(signals=codes)
@@ -459,11 +455,11 @@ def daemon_setup():
         print('Shutdown button pressed. Hold down for 2s to shut down...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not GPIO.input(shdn_gpio):
+        if not GPIO.input(shutdown_gpio):
             print('Shutting down...')
             blink()
             cmd = config.get('shutdown_command')
-            subprocess.run(converters.command(cmd))
+            subprocess.run(cv.command(cmd))
 
     def reboot(*_):
         """Restart the system"""
@@ -474,7 +470,7 @@ def daemon_setup():
             print('Rebooting...')
             blink()
             cmd = config.get('reboot_command')
-            subprocess.run(converters.command(cmd))
+            subprocess.run(cv.command(cmd))
 
     def blink(seconds=0.5, number=3):
         """Blinks the LED"""
@@ -491,20 +487,20 @@ def daemon_setup():
 
     config = CFG.defaults()
     # set the LED up
-    led_gpio = int(config.get('led_gpio'))
+    led_gpio = cv.get('led_gpio', config, int)
     GPIO.setup(led_gpio, GPIO.OUT)
     GPIO.output(led_gpio, 1)
     # set the buttons up
-    shdn_gpio = int(config.get('shutdown_gpio'))
-    reboot_gpio = int(config.get('reboot_gpio'))
-    # debounce time in milliseconds
-    millis = int(float(config.get('input_bounce_time')) * 1000)
-    GPIO.setup(shdn_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    shutdown_gpio = cv.get('shutdown_gpio', config, int)
+    reboot_gpio = cv.get('reboot_gpio', config, int)
+    GPIO.setup(shutdown_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    # debounce time in milliseconds
+    millis = cv.get('input_bounce_time', config, cv.millis)
     # register callbacks for shutdown and reboot
-    event_detect = GPIO.add_event_detect
-    event_detect(shdn_gpio, GPIO.FALLING, callback=shutdown, bouncetime=millis)
-    event_detect(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=millis)
+    ev_det = GPIO.add_event_detect
+    ev_det(shutdown_gpio, GPIO.FALLING, callback=shutdown, bouncetime=millis)
+    ev_det(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=millis)
     # Register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -517,7 +513,7 @@ def interface_setup():
         if name.lower() == 'default':
             # don't treat this as an interface
             continue
-        settings = converters.parse_configuration(section)
+        settings = cv.parse_configuration(section)
         interface = Interface(settings)
         INTERFACES[name.lower().strip()] = interface
 
