@@ -33,7 +33,8 @@ DEFAULTS = dict(listen_address='127.0.0.1:23017',
                 valve4='9,10,11,12,13,14,0005,O15',
                 supported_modes='0,1,2,3',
                 supported_row16_modes='0,1,2,3')
-CONVERTERS = {'signals': converters.sig_list, 'intlist': converters.int_list}
+CONVERTERS = {'signals': converters.sig_list, 'intlist': converters.int_list,
+              'int': int, 'float': float}
 CFG = configparser.ConfigParser(defaults=DEFAULTS, converters=CONVERTERS,
                                 default_section='default')
 CFG.read(CONFIGURATION_PATH)
