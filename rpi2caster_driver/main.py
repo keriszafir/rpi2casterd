@@ -513,7 +513,7 @@ def interface_setup():
     """Setup the interfaces"""
     # greedily instantiate the interfaces
     for name, section in CFG.items():
-        if name.lower == 'default':
+        if name.lower() == 'default':
             # don't treat this as an interface
             continue
         settings = converters.parse_configuration(section)
