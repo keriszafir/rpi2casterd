@@ -13,12 +13,14 @@ INTERFACES = {}
 
 
 def handle_request(routine):
-    """Boilerplate code for the flask API functions"""
+    """Boilerplate code for the flask API functions,
+    used for handling requests to interfaces."""
     @wraps(routine)
-    def wrapper(*args, **kwargs):
+    def wrapper(prefix, *args, **kwargs):
         """wraps the routine"""
         try:
-            retval = routine(*args, **kwargs) or dict()
+            interface = INTERFACES[prefix]
+            retval = routine(interface, *args, **kwargs) or dict()
             if 'error' in retval:
                 outcome = OrderedDict(success=False)
             else:
@@ -31,18 +33,16 @@ def handle_request(routine):
 
 
 @APP.route('/interfaces', methods=('GET',))
-@handle_request
 def list_interfaces():
     """Lists available interfaces"""
-    return {i: interface.name for i, interface in INTERFACES.values()}
+    return {i: interface.name for (i, interface) in INTERFACES.values()}
 
 
 @APP.route('/interfaces/<prefix>/config', methods=('GET', 'POST'))
 @handle_request
-def configuration(prefix):
+def configuration(interface):
     """GET: reads the interface configuration,
     POST: changes the configuration"""
-    interface = INTERFACES[prefix]
     if request.method == 'GET':
         return interface.config
     elif request.method == 'POST':
@@ -51,33 +51,29 @@ def configuration(prefix):
 
 @APP.route('/interfaces/<prefix>/status')
 @handle_request
-def get_status(prefix):
+def get_status(interface):
     """Gets the current interface status"""
-    interface = INTERFACES[prefix]
     return interface.status
 
 
 @APP.route('/interfaces/<prefix>/start')
 @handle_request
-def start_machine(prefix):
+def start_machine(interface):
     """Starts the machine"""
-    interface = INTERFACES[prefix]
     return interface.start()
 
 
 @APP.route('/interfaces/<prefix>/stop')
 @handle_request
-def stop_machine(prefix):
+def stop_machine(interface):
     """Stops the machine"""
-    interface = INTERFACES[prefix]
     return interface.stop()
 
 
 @APP.route('/interfaces/<prefix>/send', methods=('POST',))
 @handle_request
-def send_signals(prefix):
+def send_signals(interface):
     """Sends the signals to the machine"""
-    interface = INTERFACES[prefix]
     signals = request.json.get('signals')
     codes = parse_signals(signals)
     return interface.send_signals(codes)
@@ -85,16 +81,14 @@ def send_signals(prefix):
 
 @APP.route('/interfaces/<prefix>/valves_on', methods=('POST',))
 @handle_request
-def valves_on(prefix):
+def valves_on(interface):
     """Turns specified valves on. Low-level control method."""
-    interface = INTERFACES[prefix]
     signals = request.json.get('signals')
     return interface.valves_on(signals)
 
 
 @APP.route('/interfaces/<prefix>/valves_off')
 @handle_request
-def valves_off(prefix):
+def valves_off(interface):
     """Turns all valves off on the interface."""
-    interface = INTERFACES[prefix]
     return interface.valves_off()
