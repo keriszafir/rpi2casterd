@@ -1,14 +1,100 @@
-"""Converter functions for rpi2caster driver"""
+"""Converter and parser functions for rpi2caster driver"""
+
+from collections import OrderedDict
+
+COLUMNS = tuple('ABCDEFGHIJKLMNO')
+ROWS = tuple(str(x) for x in range(16, 0, -1))
+JUSTIFICATION = ('0005', '0075', 'S')
+# all Monotype signals
+SIGNALS = [*COLUMNS[:-1], *(str(x) for x in range(15)), 'O15', *JUSTIFICATION]
 
 
-def str_list(input_string):
-    """Convert 'a,b,c,d,e' -> ['a', 'b', 'c', 'd', 'e']"""
-    return [x.strip() for x in input_string.split(',')]
+def sig_list(input_string):
+    """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E']."""
+    raw = [x.strip().upper() for x in input_string.split(',')]
+    return [x for x in raw if x in SIGNALS]
 
 
 def int_list(input_string):
     """Convert '1,2,3,4,5' -> [1, 2, 3, 4, 5]"""
     return [int(x.strip()) for x in input_string.split(',')]
+
+
+def command(input_string):
+    """Operating system command: string -> accepted by subprocess.run"""
+    chunks = input_string.split(' ')
+    return [x.strip() for x in chunks]
+
+
+def parse_configuration(source):
+    """Get the interface parameters from a config parser section"""
+    try:
+        config = OrderedDict()
+        # supported operation and row 16 addressing modes
+        modes = source.getintlist('supported_modes')
+        row16_modes = source.getintlist('supported_row16_modes')
+        config['supported_modes'] = modes
+        config['mode'] = modes[0]
+        config['supported_row16_modes'] = row16_modes
+        config['row16_mode'] = row16_modes[0]
+
+        # determine the sensor and output drivers
+        config['sensor_driver'] = source.get('sensor_driver').lower().strip()
+        config['output_driver'] = source.get('output_driver').lower().strip()
+
+        # get timings
+        config['casting_startup_timeout'] = source.getfloat('startup_timeout')
+        config['casting_sensor_timeout'] = source.getfloat('sensor_timeout')
+        config['pump_stop_timeout'] = source.getfloat('pump_stop_timeout')
+        config['punching_on_time'] = source.getfloat('punching_on_time')
+        config['punching_off_time'] = source.getfloat('punching_off_time')
+
+        # interface settings: input
+        config['sensor_gpio'] = source.getint('sensor_gpio')
+        config['input_bounce_time'] = source.getfloat('input_bounce_time')
+
+        # interface settings: output
+        config['i2c_bus'] = source.getint('i2c_bus')
+        config['mcp0_address'] = source.getint('mcp0_address')
+        config['mcp1_address'] = source.getint('mcp1_address')
+        config['signal_mappings'] = dict(valve1=source.getsignals('valve1'),
+                                         valve2=source.getsignals('valve2'),
+                                         valve3=source.getsignals('valve3'),
+                                         valve4=source.getsignals('valve4'))
+
+        # configuration ready to ship
+        return config
+
+    except KeyError as exc:
+        return dict(error='configuration_error: {}'.format(exc))
+
+
+def parse_signals(source):
+    """Parse the incoming signals iterable into useful signals"""
+    def find(value):
+        """Detect and dispatch known signals in source string"""
+        nonlocal signals
+        string = str(value)
+        if string in signals:
+            signals = signals.replace(string, '')
+            return True
+        else:
+            return False
+
+    # make sure it's an uppercase string
+    try:
+        signals = source.upper()
+    except AttributeError:
+        signals = ''.join(str(x).upper() for x in source)
+    # read the signals to know what's inside
+    justification = [x for x in JUSTIFICATION if find(x)]
+    rows = reversed([x for x in ROWS if find(x)]) or ['15']
+    columns = [x for x in COLUMNS if find(x)] or ['O']
+    # make NI, NL appear on the front
+    for combo in ['NL', 'NI']:
+        if set(combo).issubset(columns):
+            columns = [*combo, *(c for c in columns if c not in combo)]
+    return tuple([*columns, *rows, *justification])
 
 
 def convert_hmn(signals):

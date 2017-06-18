@@ -19,17 +19,24 @@ class SMBusOutput:
     """Python SMBus-based output controller for rpi2caster."""
     name = 'SMBus output driver'
 
-    def __init__(self, signals, mcp0_address, mcp1_address, i2c_bus=1):
-        self.mcp0_address = mcp0_address
-        self.mcp1_address = mcp1_address
-        self.port = SMBus(i2c_bus)
+    def __init__(self, config):
+        self.mcp0_address = config['mcp0_address']
+        self.mcp1_address = config['mcp1_address']
+        self.port = SMBus(config['i2c_bus'])
         # initialize pins as outputs with low initial state
         for address in self.mcp0_address, self.mcp1_address:
             for register in IODIRA, IODIRB, OLATA, OLATB:
                 self.port.write_byte_data(address, register, 0x00)
         # map signals to outputs
+        signal_mappings = config['signal_mappings']
+        valve1, valve2 = signal_mappings['valve1'], signal_mappings['valve2']
+        valve3, valve4 = signal_mappings['valve3'], signal_mappings['valve4']
+        signals = [*valve1, *valve2, *valve3, *valve4]
         signal_numbers = [2 ** x for x in range(32)]
         self.mapping = dict(zip(signals, signal_numbers))
+
+    def __str__(self):
+        return self.name
 
     def _send(self, byte0, byte1, byte2, byte3):
         """Write 4 bytes of data to all ports (A, B)
