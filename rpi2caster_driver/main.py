@@ -12,7 +12,7 @@ import time
 import RPi.GPIO as GPIO
 
 from rpi2caster_driver import converters as cv
-from .webapi import INTERFACES, APP
+from rpi2caster_driver.webapi import INTERFACES, APP
 
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2caster-driver.conf'

@@ -6,7 +6,7 @@ from functools import wraps
 from flask import Flask, abort, jsonify
 from flask.globals import request
 
-from .converters import parse_signals
+from rpi2caster_driver.converters import parse_signals
 
 APP = Flask('rpi2caster')
 INTERFACES = {}
@@ -35,7 +35,7 @@ def handle_request(routine):
 @APP.route('/interfaces', methods=('GET',))
 def list_interfaces():
     """Lists available interfaces"""
-    return {i: interface.name for (i, interface) in INTERFACES.values()}
+    return {i: interface.name for (i, interface) in INTERFACES.items()}
 
 
 @APP.route('/interfaces/<prefix>/config', methods=('GET', 'POST'))
