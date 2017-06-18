@@ -438,8 +438,9 @@ def handle_exceptions(routine):
         try:
             return routine(*args, **kwargs)
 
-        except (OSError, PermissionError, RuntimeError):
+        except (OSError, PermissionError, RuntimeError) as exc:
             print('ERROR: You must run this program as root!')
+            print(str(exc))
 
         except KeyboardInterrupt:
             print('System exit.')
