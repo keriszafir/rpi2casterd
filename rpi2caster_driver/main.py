@@ -63,7 +63,7 @@ class MachineStopped(Exception):
 
 class SysfsSensor:
     """Optical cycle sensor using kernel sysfs interface"""
-    name = 'Kernel SysFS interface for photocell sensor GPIO'
+    name = 'kernel SysFS interface sensor'
     last_state = True
 
     def __init__(self, config):
@@ -163,7 +163,7 @@ class SysfsSensor:
 
 class RPiGPIOSensor:
     """Simple RPi.GPIO input driver for photocell"""
-    name = 'RPi.GPIO input driver'
+    name = 'RPi.GPIO sensor'
 
     def __init__(self, config):
         self.gpio = config['sensor_gpio']
@@ -207,6 +207,11 @@ class Interface:
         self.config = config_dict
         self.status = dict(busy=False, pump_working=False, signals=[])
         self.hardware_setup()
+
+    @property
+    def name(self):
+        """Get a name for the interface based on caster and output"""
+        return '{} + {}'.format(self.sensor, self.output)
 
     @property
     def mode(self):

@@ -6,7 +6,7 @@ import wiringpi
 
 class WiringPiOutput:
     """A 32-channel control interface based on two MCP23017 chips"""
-    name = 'MCP23017 driver using wiringPi2-Python library'
+    name = 'WiringPi MCP23017 output'
     pin_base = 65
 
     def __init__(self, config):

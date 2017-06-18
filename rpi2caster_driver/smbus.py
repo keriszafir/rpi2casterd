@@ -17,7 +17,7 @@ IODIRA, IODIRB = 0x00, 0x01
 
 class SMBusOutput:
     """Python SMBus-based output controller for rpi2caster."""
-    name = 'SMBus output driver'
+    name = 'SMBus output'
 
     def __init__(self, config):
         self.mcp0_address = config['mcp0_address']
