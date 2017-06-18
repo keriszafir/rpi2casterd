@@ -183,12 +183,13 @@ class RPiGPIOSensor:
     def wait_for(self, new_state, timeout):
         """Use interrupt handlers in RPi.GPIO for triggering the change"""
         change = GPIO.RISING if new_state else GPIO.FALLING
+        millis = int(self.bounce_time * 1000)
         while True:
             try:
                 # all times are in milliseconds
                 channel = GPIO.wait_for_edge(self.gpio, change,
                                              timeout=timeout*1000,
-                                             bouncetime=self.bounce_time*1000)
+                                             bouncetime=millis)
                 if channel is None:
                     raise MachineStopped
                 else:
@@ -494,7 +495,8 @@ def daemon_setup():
     # set the buttons up
     shdn_gpio = int(config.get('shutdown_gpio'))
     reboot_gpio = int(config.get('reboot_gpio'))
-    millis = float(config.get('input_bounce_time')) * 1000
+    # debounce time in milliseconds
+    millis = int(float(config.get('input_bounce_time')) * 1000)
     GPIO.setup(shdn_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     # register callbacks for shutdown and reboot
