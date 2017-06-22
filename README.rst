@@ -1,4 +1,4 @@
-rpi2caster-driver
+rpi2casterd
 =================
 
 Hardware driver and web API for rpi2caster
