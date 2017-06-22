@@ -4,33 +4,35 @@ rpi2casterd
 Hardware driver and web API for rpi2caster
 ------------------------------------------
 
-This is a machine control daemon for the rpi2caster typesetting and casting software.
+This is a machine control daemon for the ``rpi2caster`` typesetting and casting software.
 It is supposed to run on a Raspberry Pi or a similar single-board computer featuring a general
 purpose input/output (GPIO) port. The Raspberry uses an output expander based on two
 MCP23017 chips to provide 32 additional outputs, used for controlling 32 solenoid valves,
 which in turn send the pneumatic signals to a Monotype composition caster or tape punch.
 
 This driver uses one of several input backends for the MCP23017-based controller:
-1. sysfs interface in Linux kernel,
-2. RPi.GPIO library.
+
+1. ``sysfs`` interface in Linux kernel,
+2. ``RPi.GPIO`` library.
 
 There are also several available output control backends:
-1. SMBus (via smbus-cffi or smbus2 package),
-2. WiringPi library.
+
+1. SMBus (via ``smbus-cffi`` or ``smbus2`` package),
+2. ``WiringPi`` library.
 
 When ready to use, the daemon lights a LED on a specified GPIO.
 An additional functionality of this daemon is control over the power and reboot buttons.
 After one of these buttons is held for 2 seconds, the LED flashes and the shutdown or reboot
 procedure begins.
 
-The program uses Flask to provide a rudimentary JSON API for caster control.
+The program uses ``Flask`` to provide a rudimentary JSON API for caster control.
 It accepts POST requests to start and stop the machine, turn the valves on and off,
 and send specified signals to the caster or perforator.
 
 Operation modes
 ---------------
 
-The interface / driver can operate in different modes, denoted by the `mode` parameter
+The interface / driver can operate in different modes, denoted by the ``mode``` parameter
 in the request's JSON payload. Depending on the mode, the behavior and signals sent vary.
 
 0 = testing
@@ -45,6 +47,7 @@ found in request, and returns a success message.
 Signals O and 15 are stripped, as they are the signals the caster defaults to
 if no signal in the ribbon is found.
 When the machine is working, the interface driver:
+
 1. waits for a machine cycle sensor (photodiode) going ON,
 2. activates specified valves,
 3. waits until the cycle sensor goes OFF,
@@ -68,6 +71,7 @@ which make no perforation in the ribbon, but trigger the ribbon advance mechanis
 
 This mode is fully automatic and driven by a configureble timer.
 The control sequence is as follows:
+
 1. turn the valves on,
 2. wait time_on for punches to go up,
 3. turn the valves off,
@@ -106,6 +110,7 @@ The earliest system, devised by one of Monotype's customers.
 It is based on combined signals (similar to N+I, N+L addressing of two additional columns).
 For rows 1...15 no modifications are done.
 For row 16, additional signals are introduced based on column:
+
 1. NI, NL, M - add H - HNI, HNL, HM
 2. H - add N - HN
 3. N - add M - MN
@@ -116,6 +121,7 @@ For row 16, additional signals are introduced based on column:
 ~~~~~~~
 Devised by Monotype and similar to HMN.
 The extra signals are a little bit different.
+
 1. NI, NL, M - add K - KNI, KNL, KM
 2. K - add N - KN
 3. N - add M - KM
@@ -132,6 +138,7 @@ by 0.2" to the left, allowing the matrix case to go a full row farther.
 
 Column D addressing is done with a combined E+F signals instead.
 So:
+
 1. replace D with EF in the original combination,
 2. add D if addressing the row 16.
 
