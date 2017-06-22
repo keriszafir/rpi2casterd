@@ -6,10 +6,21 @@ from functools import wraps
 from flask import Flask, abort, jsonify
 from flask.globals import request
 
+from rpi2caster_driver import exceptions as exc
 from rpi2caster_driver.converters import parse_signals
 
 APP = Flask('rpi2caster')
 INTERFACES = {}
+
+
+def success(**kwargs):
+    """Return a success JSON dict"""
+    return jsonify(OrderedDict(success=True, **kwargs))
+
+
+def failure(**kwargs):
+    """Return an error JSON dict"""
+    return jsonify(OrderedDict(success=False, **kwargs))
 
 
 def handle_request(routine):
@@ -20,54 +31,61 @@ def handle_request(routine):
         """wraps the routine"""
         try:
             interface = INTERFACES[prefix]
-            retval = routine(interface, *args, **kwargs) or dict()
-            if 'error' in retval:
-                outcome = OrderedDict(success=False)
-            else:
-                outcome = OrderedDict(success=True)
-            outcome.update(retval)
-            return jsonify(outcome)
+            # does the function return any json-ready parameters?
+            outcome = routine(interface, *args, **kwargs) or dict()
+            # if caught no exceptions, all went well => return success
+            return success(**outcome)
         except KeyError:
             abort(404)
+        except (exc.InterfaceNotStarted, exc.InterfaceBusy,
+                exc.MachineStopped) as err:
+            return failure(error=err.name, error_code=err.code)
+        except (exc.UnsupportedMode, exc.UnsupportedRow16Mode) as err:
+            return failure(error=err.name, error_code=err.code,
+                           offending_value=str(err))
     return wrapper
 
 
-@APP.route('/interfaces', methods=('GET',))
+@APP.route('/')
+def index():
+    """Main page for rpi2caster interface"""
+    return 'It works!'
+
+
+@APP.route('/interfaces')
 def list_interfaces():
     """Lists available interfaces"""
     return jsonify({i: interface.name for i, interface in INTERFACES.items()})
 
 
-@APP.route('/interfaces/<prefix>/config', methods=('GET', 'POST'))
+@APP.route('/interfaces/<prefix>/config')
 @handle_request
-def configuration(interface):
-    """GET: reads the interface configuration,
-    POST: changes the configuration"""
-    if request.method == 'GET':
-        return interface.config
-    elif request.method == 'POST':
-        return interface.set_config(request.json)
+def get_config(interface):
+    """Get the interface configuration"""
+    return interface.config
 
 
 @APP.route('/interfaces/<prefix>/status')
 @handle_request
 def get_status(interface):
     """Gets the current interface status"""
-    return interface.status
+    return interface.get_status()
 
 
-@APP.route('/interfaces/<prefix>/start')
+@APP.route('/interfaces/<prefix>/start', methods=('POST',))
 @handle_request
 def start_machine(interface):
     """Starts the machine"""
-    return interface.start()
+    mode = request.json.get('mode')
+    return interface.start(mode=mode)
 
 
-@APP.route('/interfaces/<prefix>/stop')
+@APP.route('/interfaces/<prefix>/stop', methods=('POST',))
 @handle_request
 def stop_machine(interface):
     """Stops the machine"""
-    return interface.stop()
+    mode = request.json.get('mode')
+    return interface.stop(mode=mode)
 
 
 @APP.route('/interfaces/<prefix>/send', methods=('POST',))
@@ -75,8 +93,10 @@ def stop_machine(interface):
 def send_signals(interface):
     """Sends the signals to the machine"""
     signals = request.json.get('signals')
+    mode = request.json.get('mode')
+    row16_mode = request.json.get('row16_mode')
     codes = parse_signals(signals)
-    return interface.send_signals(codes)
+    return interface.send_signals(codes, mode=mode, row16_mode=row16_mode)
 
 
 @APP.route('/interfaces/<prefix>/valves_on', methods=('POST',))
@@ -84,10 +104,11 @@ def send_signals(interface):
 def valves_on(interface):
     """Turns specified valves on. Low-level control method."""
     signals = request.json.get('signals')
-    return interface.valves_on(signals)
+    codes = parse_signals(signals)
+    return interface.valves_on(codes)
 
 
-@APP.route('/interfaces/<prefix>/valves_off')
+@APP.route('/interfaces/<prefix>/valves_off', methods=('POST',))
 @handle_request
 def valves_off(interface):
     """Turns all valves off on the interface."""

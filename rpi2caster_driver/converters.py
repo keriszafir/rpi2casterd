@@ -1,10 +1,16 @@
 """Converter and parser functions for rpi2caster driver"""
 
-from collections import OrderedDict
+from collections import deque, OrderedDict
 
 COLUMNS = tuple('ABCDEFGHIJKLMNO')
 ROWS = tuple(str(x) for x in range(16, 0, -1))
 JUSTIFICATION = ('0005', '0075', 'S')
+# the signals in a sequence for parsing
+PARSED_SIGNALS = tuple(['0005', '0075', *(str(x) for x in range(16, 0, -1)),
+                        *'ABCDEFGHIJKLMNOS'])
+# the signals in a sequence for encoding
+ORDERED_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
+                         *(str(x) for x in range(1, 15)), 'O15'])
 # all Monotype signals
 SIGNALS = [*COLUMNS[:-1], *(str(x) for x in range(15)), 'O15', *JUSTIFICATION]
 
@@ -109,14 +115,25 @@ def parse_signals(source):
     except AttributeError:
         _source = ''.join(str(x).upper() for x in source)
     # read the signals to know what's inside
-    justification = [x for x in JUSTIFICATION if find(x)]
-    rows = reversed([x for x in ROWS if find(x)]) or ['15']
-    columns = [x for x in COLUMNS if find(x)] or ['O']
-    # make NI, NL appear on the front
-    for combo in ['NL', 'NI']:
-        if set(combo).issubset(columns):
-            columns = [*combo, *(c for c in columns if c not in combo)]
-    return tuple([*columns, *rows, *justification])
+    return {s for s in PARSED_SIGNALS if find(s)}
+
+
+def ordered_signals(source):
+    """Returns a list of arranged signals ready for display"""
+    arranged = deque(s for s in ORDERED_SIGNALS if s in source)
+    # put NI, NL, NK, NJ, NKJ etc. at the front
+    if 'N' in arranged:
+        for other in 'JKLI':
+            if other in source:
+                arranged.remove('N')
+                arranged.appendleft(other)
+                arranged.appendleft('N')
+    return list(arranged)
+
+
+def signals_set(source):
+    """Convert an iterable of signals to a set"""
+    return {str(s).upper() for s in source}
 
 
 def convert_hmn(source):
@@ -129,20 +146,20 @@ def convert_hmn(source):
     # {ABCDEFGIJKL} -> add HM -> HM{ABCDEFGIJKL}
 
     # earlier rows than 16 won't trigger the attachment -> early return
-    signals_set = {str(s).upper() for s in source}
+    sigset = signals_set(source)
     for i in range(1, 16):
-        if str(i) in signals_set:
-            return signals_set
+        if str(i) in sigset:
+            return sigset
 
     columns = 'NI', 'NL', 'H', 'M', 'N', 'O'
     extras = 'H', 'H', 'N', 'H', 'M', 'HMN'
-    if '16' in signals_set:
+    if '16' in sigset:
         for column, extra in zip(columns, extras):
-            if column in signals_set:
-                signals_set.update(extra)
-                signals_set.discard('16')
+            if sigset.issuperset(column):
+                sigset.discard('16')
+                sigset.update(extra)
                 break
-    return signals_set
+    return sigset
 
 
 def convert_kmn(source):
@@ -155,35 +172,70 @@ def convert_kmn(source):
     # {ABCDEFGHIJL} -> add KM -> KM{ABCDEFGHIJL}
 
     # earlier rows than 16 won't trigger the attachment -> early return
-    signals_set = {str(s).upper() for s in source}
+    sigset = signals_set(source)
     for i in range(1, 16):
-        if str(i) in signals_set:
-            return signals_set
+        if str(i) in sigset:
+            return sigset
 
     columns = 'NI', 'NL', 'K', 'M', 'N', 'O'
     extras = 'K', 'K', 'N', 'K', 'M', 'HMN'
-    if '16' in signals_set:
+    if '16' in sigset:
         for column, extra in zip(columns, extras):
-            if column in signals_set:
-                signals_set.update(extra)
-                signals_set.discard('16')
+            if sigset.issuperset(column):
+                sigset.update(extra)
+                sigset.discard('16')
                 break
-    return signals_set
+    return sigset
 
 
 def convert_unitshift(source):
     """Unit-shift addressing mode - rather common,
     designed by Monotype and introduced in 1963"""
-    signals_set = {str(s).upper() for s in source}
-    if 'D' in signals_set:
+    sigset = signals_set(source)
+    if 'D' in sigset:
         # when the attachment is on, the D signal is routed
         # to unit-shift activation piston instead of column D air pin
         # this pin is activated by EF combination instead
-        signals_set.discard('D')
-        signals_set.update('EF')
-    if '16' in signals_set:
+        sigset.discard('D')
+        sigset.update('EF')
+    if '16' in sigset:
         # use unit shift if the row signal is 16
         # make it possible to shift the diecase on earlier rows
-        signals_set.update('D')
-        signals_set.discard('16')
-    return signals_set
+        sigset.update('D')
+        sigset.discard('16')
+    return sigset
+
+
+def strip_16(source):
+    """Get rid of the "16" signal and replace it with "15"."""
+    sigset = signals_set(source)
+    if '16' in sigset:
+        sigset.discard('16')
+        sigset.add('15')
+    return sigset
+
+
+def convert_o15(source):
+    """Change O and 15 to a combined O+15 signal"""
+    source_signals = set(source)
+    for signal in ('O', '15'):
+        if signal in source_signals:
+            source_signals.discard(signal)
+            source_signals.update('O15')
+    return source_signals
+
+
+def strip_o15(source):
+    """For casting, don't use O+15"""
+    source_signals = set(source)
+    source_signals.discard('O15')
+    return source_signals
+
+
+def add_missing_o15(source):
+    """If length of signals is less than 2, add an O+15 so that when punching,
+    the ribbon will be advanced properly."""
+    source_signals = set(source)
+    if len(source_signals) < 2:
+        source_signals.update('O15')
+    return source_signals

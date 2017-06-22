@@ -11,6 +11,7 @@ import subprocess
 import time
 import RPi.GPIO as GPIO
 
+from rpi2caster_driver import exceptions as exc
 from rpi2caster_driver import converters as cv
 from rpi2caster_driver.webapi import INTERFACES, APP
 
@@ -53,366 +54,28 @@ GPIOS = []
 GPIO.setmode(GPIO.BCM)
 
 
-class HWConfigError(Exception):
-    """configuration error: wrong name or cannot import module"""
+def check_mode(routine):
+    """Check if the interface supports the desired operation mode"""
+    @functools.wraps(routine)
+    def wrapper(interface, *args, **kwargs):
+        """wraps the routine"""
+        mode = kwargs.get('mode')
+        if mode is not None:
+            raise exc.UnsupportedMode(mode)
+        return routine(interface, *args, **kwargs)
+    return wrapper
 
 
-class MachineStopped(Exception):
-    """machine not turning exception"""
-
-
-class SysfsSensor:
-    """Optical cycle sensor using kernel sysfs interface"""
-    name = 'kernel SysFS interface sensor'
-    last_state = True
-
-    def __init__(self, config):
-        self.gpio = config['sensor_gpio']
-        self.bounce_time = config['input_bounce_time']
-        self.value_file = self.setup()
-        GPIOS.append(self.gpio)
-
-    def __str__(self):
-        return self.name
-
-    def wait_for(self, new_state, timeout):
-        """
-        Waits until the sensor is in the desired state.
-        new_state = True or False.
-        timeout means that if no signals in given time,
-        raise MachineStopped.
-        force_cycle means that if last_state == new_state,
-        a full cycle must pass before exit.
-        Uses software debouncing set at 5ms
-        """
-        def get_state():
-            """Reads current input state"""
-            gpiostate.seek(0)
-            # File can contain "1\n" or "0\n"; convert it to boolean
-            return bool(int(gpiostate.read().strip()))
-
-        # Set debounce time to now
-        debounce = time.time()
-        # Prevent sudden exit if the current state is the desired state
-        with io.open(self.value_file, 'r') as gpiostate:
-            if get_state() == new_state:
-                self.last_state = not new_state
-        with io.open(self.value_file, 'r') as gpiostate:
-            while True:
-                try:
-                    signals = select.epoll()
-                    signals.register(gpiostate, select.POLLPRI)
-                    while self.last_state != new_state:
-                        # Keep polling or raise MachineStopped on timeout
-                        if signals.poll(timeout):
-                            state = get_state()
-                            # Input bounce time is given in milliseconds
-                            if time.time() - debounce > self.bounce_time:
-                                self.last_state = state
-                            debounce = time.time()
-                        else:
-                            raise MachineStopped
-
-                    # state changed
-                    return
-
-                except RuntimeError:
-                    continue
-
-    def setup(self):
-        """configure_sysfs_interface(gpio):
-
-        Sets up the sysfs interface for reading events from GPIO
-        (general purpose input/output). Checks if path/file is readable.
-        Returns the value and edge filenames for this GPIO.
-        """
-        # Set up an input polling file for machine cycle sensor:
-        sysfs_root = '/sys/class/gpio'
-        export_path = '{}/export'.format(sysfs_root)
-        value_path = '{}/gpio{}/value'.format(sysfs_root, self.gpio)
-        dir_path = '{}/gpio{}/direction'.format(sysfs_root, self.gpio)
-        edge_path = '{}/gpio{}/edge'.format(sysfs_root, self.gpio)
-
-        # Export the GPIO pin to sysfs
-        with io.open(export_path, 'w') as export_file:
-            export_file.write('{}'.format(self.gpio))
-
-        # set the GPIO as input
-        with io.open(dir_path, 'w') as direction_file:
-            direction_file.write('in')
-
-        # set the GPIO to generate interrupts on both edges
-        with io.open(edge_path, 'w') as edge_file:
-            edge_file.write('both')
-
-        with io.open(edge_path, 'r') as edge_file:
-            if 'both' not in edge_file.read():
-                message = ('GPIO {} must be set to generate interrupts '
-                           'on both rising AND falling edge!')
-                raise OSError(19, message.format(self.gpio), edge_path)
-
-        # verify that the GPIO value file is accessible
-        if not os.access(value_path, os.R_OK):
-            message = ('GPIO value file does not exist or cannot be read. '
-                       'You must export the GPIO no {} as input first!')
-            raise OSError(13, message.format(self.gpio), value_path)
-
-        # register the GPIO for future teardown
-        return value_path
-
-
-class RPiGPIOSensor:
-    """Simple RPi.GPIO input driver for photocell"""
-    name = 'RPi.GPIO sensor'
-
-    def __init__(self, config):
-        self.gpio = config['sensor_gpio']
-        self.bounce_time = config['input_bounce_time']
-        self.setup()
-
-    def __str__(self):
-        return self.name
-
-    def setup(self):
-        """Initial configuration."""
-        GPIO.setup(self.gpio, GPIO.IN)
-
-    def wait_for(self, new_state, timeout):
-        """Use interrupt handlers in RPi.GPIO for triggering the change"""
-        change = GPIO.RISING if new_state else GPIO.FALLING
-        millis = int(self.bounce_time * 1000)
-        while True:
-            try:
-                # all times are in milliseconds
-                channel = GPIO.wait_for_edge(self.gpio, change,
-                                             timeout=timeout*1000,
-                                             bouncetime=millis)
-                if channel is None:
-                    raise MachineStopped
-                else:
-                    return
-            except RuntimeError:
-                # In case RuntimeError: Error waiting for edge is raised...
-                continue
-            except (KeyboardInterrupt, EOFError):
-                # Emergency stop by keyboard
-                raise MachineStopped
-
-
-class Interface:
-    """Hardware control interface"""
-    sensor, output = None, None
-
-    def __init__(self, config_dict):
-        self.config = config_dict
-        self.status = dict(busy=False, pump_working=False, signals=[])
-        self.hardware_setup()
-
-    @property
-    def name(self):
-        """Get a name for the interface based on caster and output"""
-        return '{} + {}'.format(self.sensor, self.output)
-
-    @property
-    def mode(self):
-        """Get an operation mode"""
-        return self.config['mode']
-
-    @property
-    def row16_mode(self):
-        """Get a row 16 addressing mode"""
-        return self.config['row16_mode']
-
-    @property
-    def busy(self):
-        """Interface busy status"""
-        return self.status['busy']
-
-    @busy.setter
-    def busy(self, state):
-        """Busy setter"""
-        self.status['busy'] = True if state else False
-
-    def set_config(self, data):
-        """Change the interface configuration.
-        If a mode or row 16 mode is specified, it'll be checked against the
-        supported modes (failing that, the method will fail).
-
-        The setup is atomic: no parameters are changed if any fails.
-        """
-        # cannot reconfigure the interface on the fly
-        if self.busy:
-            return dict(success=False, error='busy')
-        # work on the configuration dictionary
-        config = self.config
-        # cache the old parameters
-        new_mode, new_row16_mode = config['mode'], config['row16_mode']
-        # update the operation mode
-        mode = data.get('mode')
-        if mode in config['supported_modes']:
-            new_mode = mode
-        elif mode is not None:
-            return dict(success=False, error='unsupported_mode')
-        # update the row 16 addressing mode
-        row16_mode = data.get('row16_mode')
-        if row16_mode in config['supported_row16_modes']:
-            new_row16_mode = row16_mode
-        elif row16_mode is not None:
-            return dict(success=False, error='unsupported_row16_mode')
-        # store the new configuration
-        config.update(dict(mode=new_mode, row16_mode=new_row16_mode))
-
-    def hardware_setup(self):
-        """Return a HardwareBackend namedtuple with sensor and driver.
-        Raise ConfigurationError if sensor or output name is not recognized,
-        or modules supporting the hardware backends cannot be imported."""
-        # cache the interface configuration
-        config = self.config
-        # set up the sensor - either sysfs or RPi.GPIO
-        try:
-            driver = config['sensor_driver']
-            sensor = (SysfsSensor if driver == 'sysfs'
-                      else RPiGPIOSensor if driver == 'rpi_gpio'
-                      else RPiGPIOSensor if driver == 'gpio'
-                      else None)
-            self.sensor = sensor(config)
-        except TypeError:
-            raise HWConfigError('Unknown sensor: {}.'.format(driver))
-        # output setup:
-        try:
-            output_name = config['output_driver']
-            if output_name == 'smbus':
-                from rpi2caster_driver.smbus import SMBusOutput as output
-            elif output_name == 'wiringpi':
-                from rpi2caster_driver.wiringpi import WiringPiOutput as output
-            self.output = output(config)
-        except NameError:
-            raise HWConfigError('Unknown output: {}.'.format(output_name))
-        except ImportError:
-            raise HWConfigError('Module not installed for {}'
-                                .format(output_name))
-
-    def start(self):
-        """Start the machine.
-        Casting requires that the machine is running before proceeding."""
-        if self.busy:
-            return dict(success=False, error='busy')
-        self.busy = True
-        if self.mode == CASTING:
-            return self.check_rotation()
-
-    def stop(self):
-        """Stop the machine."""
-        self.valves_off()
-        if self.mode == CASTING:
-            self.pump_stop()
-        # cut the air off in all modes
-        self.valves_off()
-        self.busy = False
-
-    def check_pump(self):
-        """Check if the pump is working or not"""
-        signals = self.status['signals']
-        if set(PUMP_STOP).issubset(signals):
-            # pump going OFF
-            return False
-        elif set(PUMP_START).issubset(signals):
-            # pump going ON
-            return True
-        else:
-            # state does not change
-            return self.status['pump_working']
-
-    def check_rotation(self):
-        """Check whether the machine is turning. Measure the speed."""
-        timeout = self.config['startup_timeout']
-        cycles = 3
-        try:
-            start_time = time.time()
-            for _ in range(cycles, 0, -1):
-                self.sensor.wait_for(AIR_ON, timeout=timeout)
-                self.sensor.wait_for(AIR_OFF, timeout=timeout)
-            end_time = time.time()
-            duration = end_time - start_time
-            # how fast is the machine turning?
-            rpm = round(cycles / duration, 2)
-            return dict(speed='{}rpm'.format(rpm))
-
-        except MachineStopped:
-            self.busy = False
-            return dict(error='machine_stopped')
-
-    def pump_stop(self):
-        """Stop the pump if it is working"""
-        if self.status['pump_working']:
-            timeout = self.config['pump_stop_timeout']
-            self.send_signals(PUMP_STOP, timeout=timeout)
-
-    def valves_off(self):
-        """Turn all valves off"""
-        self.output.valves_off()
-
-    def valves_on(self, signals):
-        """proxy for output's valves_on method"""
-        _signals = [str(s).upper() for s in signals]
-        self.output.valves_on(_signals)
-
-    def send_signals(self, signals, timeout=None):
-        """Send the signals to the caster/perforator.
-        Based on mode:
-            casting: sensor ON, valves ON, sensor OFF, valves OFF;
-            punching: valves ON, wait t1, valves OFF, wait t2
-            testing: valves OFF, valves ON
-
-        In the punching mode, if there are less than two signals,
-        an additional O+15 signal will be activated. Otherwise the paper ribbon
-        advance mechanism won't work."""
-        timeout = timeout or self.config['sensor_timeout']
-        mode, row16_mode = self.config['mode'], self.config['row16_mode']
-        # first adjust the signals based on the row16 addressing mode
-        conversions = {ROW16_OFF: lambda x: x,
-                       ROW16_HMN: cv.convert_hmn,
-                       ROW16_KMN: cv.convert_kmn,
-                       ROW16_UNITSHIFT: cv.convert_unitshift}
-        conversion = conversions[row16_mode]
-        codes = signals if mode == TESTING else conversion(signals)
-        self.status.update(signals=codes)
-        if mode == CASTING:
-            # casting: sensor-driven valves on and off
-            try:
-                self.sensor.wait_for(AIR_ON, timeout=timeout)
-                self.valves_on(codes)
-                self.sensor.wait_for(AIR_OFF, timeout=timeout)
-                self.valves_off()
-                self.status.update(pump_working=self.check_pump())
-            except MachineStopped:
-                # run recursively if needed
-                self.pump_stop()
-                return dict(error='machine_stopped')
-
-        elif mode == MANUAL_PUNCHING:
-            # semi-automatic perforator (advanced by keypress)
-            self.valves_on(codes)
-            time.sleep(self.config['punching_on_time'])
-            self.valves_off()
-
-        elif mode == PUNCHING:
-            # timer-driven perforator
-            self.valves_on(codes)
-            time.sleep(self.config['punching_on_time'])
-            self.valves_off()
-            time.sleep(self.config['punching_off_time'])
-
-        elif mode == TESTING:
-            # send signals to valves and keep them on
-            self.valves_off()
-            self.valves_on(codes)
-
-        else:
-            return dict(error='unknown_mode')
-
-        # all went well
-        return self.status
+def check_row16_mode(routine):
+    """Check if the interface supports the desired row 16 addressing mode"""
+    @functools.wraps(routine)
+    def wrapper(interface, *args, **kwargs):
+        """wraps the routine"""
+        row16_mode = kwargs.get('row16_mode')
+        if row16_mode is not None:
+            raise exc.UnsupportedRow16Mode(row16_mode)
+        return routine(interface, *args, **kwargs)
+    return wrapper
 
 
 def teardown():
@@ -440,9 +103,9 @@ def handle_exceptions(routine):
         try:
             return routine(*args, **kwargs)
 
-        except (OSError, PermissionError, RuntimeError) as exc:
+        except (OSError, PermissionError, RuntimeError) as exception:
             print('ERROR: You must run this program as root!')
-            print(str(exc))
+            print(str(exception))
 
         except KeyboardInterrupt:
             print('System exit.')
@@ -535,6 +198,337 @@ def main():
         address = CFG.defaults().get('listen_address')
         port = 23017
     APP.run(address, port)
+
+
+class SysfsSensor:
+    """Optical cycle sensor using kernel sysfs interface"""
+    name = 'kernel SysFS interface sensor'
+    last_state = True
+
+    def __init__(self, config):
+        self.gpio = config['sensor_gpio']
+        self.bounce_time = config['input_bounce_time']
+        self.value_file = self.setup()
+        GPIOS.append(self.gpio)
+
+    def __str__(self):
+        return self.name
+
+    def wait_for(self, new_state, timeout):
+        """
+        Waits until the sensor is in the desired state.
+        new_state = True or False.
+        timeout means that if no signals in given time,
+        raise MachineStopped.
+        force_cycle means that if last_state == new_state,
+        a full cycle must pass before exit.
+        Uses software debouncing set at 5ms
+        """
+        def get_state():
+            """Reads current input state"""
+            gpiostate.seek(0)
+            # File can contain "1\n" or "0\n"; convert it to boolean
+            return bool(int(gpiostate.read().strip()))
+
+        # Set debounce time to now
+        debounce = time.time()
+        # Prevent sudden exit if the current state is the desired state
+        with io.open(self.value_file, 'r') as gpiostate:
+            if get_state() == new_state:
+                self.last_state = not new_state
+        with io.open(self.value_file, 'r') as gpiostate:
+            while True:
+                try:
+                    signals = select.epoll()
+                    signals.register(gpiostate, select.POLLPRI)
+                    while self.last_state != new_state:
+                        # Keep polling or raise MachineStopped on timeout
+                        if signals.poll(timeout):
+                            state = get_state()
+                            # Input bounce time is given in milliseconds
+                            if time.time() - debounce > self.bounce_time:
+                                self.last_state = state
+                            debounce = time.time()
+                        else:
+                            raise exc.MachineStopped
+
+                    # state changed
+                    return
+
+                except RuntimeError:
+                    continue
+
+    def setup(self):
+        """configure_sysfs_interface(gpio):
+
+        Sets up the sysfs interface for reading events from GPIO
+        (general purpose input/output). Checks if path/file is readable.
+        Returns the value and edge filenames for this GPIO.
+        """
+        # Set up an input polling file for machine cycle sensor:
+        sysfs_root = '/sys/class/gpio'
+        export_path = '{}/export'.format(sysfs_root)
+        value_path = '{}/gpio{}/value'.format(sysfs_root, self.gpio)
+        dir_path = '{}/gpio{}/direction'.format(sysfs_root, self.gpio)
+        edge_path = '{}/gpio{}/edge'.format(sysfs_root, self.gpio)
+
+        # Export the GPIO pin to sysfs
+        with io.open(export_path, 'w') as export_file:
+            export_file.write('{}'.format(self.gpio))
+
+        # set the GPIO as input
+        with io.open(dir_path, 'w') as direction_file:
+            direction_file.write('in')
+
+        # set the GPIO to generate interrupts on both edges
+        with io.open(edge_path, 'w') as edge_file:
+            edge_file.write('both')
+
+        with io.open(edge_path, 'r') as edge_file:
+            if 'both' not in edge_file.read():
+                message = ('GPIO {} must be set to generate interrupts '
+                           'on both rising AND falling edge!')
+                raise OSError(19, message.format(self.gpio), edge_path)
+
+        # verify that the GPIO value file is accessible
+        if not os.access(value_path, os.R_OK):
+            message = ('GPIO value file does not exist or cannot be read. '
+                       'You must export the GPIO no {} as input first!')
+            raise OSError(13, message.format(self.gpio), value_path)
+
+        # register the GPIO for future teardown
+        return value_path
+
+
+class RPiGPIOSensor:
+    """Simple RPi.GPIO input driver for photocell"""
+    name = 'RPi.GPIO sensor'
+
+    def __init__(self, config):
+        self.gpio = config['sensor_gpio']
+        self.bounce_time = config['input_bounce_time']
+        self.setup()
+
+    def __str__(self):
+        return self.name
+
+    def setup(self):
+        """Initial configuration."""
+        GPIO.setup(self.gpio, GPIO.IN)
+
+    def wait_for(self, new_state, timeout):
+        """Use interrupt handlers in RPi.GPIO for triggering the change"""
+        change = GPIO.RISING if new_state else GPIO.FALLING
+        millis = int(self.bounce_time * 1000)
+        while True:
+            try:
+                # all times are in milliseconds
+                channel = GPIO.wait_for_edge(self.gpio, change,
+                                             timeout=timeout*1000,
+                                             bouncetime=millis)
+                if channel is None:
+                    raise exc.MachineStopped
+                else:
+                    return
+            except RuntimeError:
+                # In case RuntimeError: Error waiting for edge is raised...
+                continue
+            except (KeyboardInterrupt, EOFError):
+                # Emergency stop by keyboard
+                raise exc.MachineStopped
+
+
+class Interface:
+    """Hardware control interface"""
+    sensor, output = None, None
+    working, pump_working = False, False
+    signals = []
+
+    def __init__(self, config_dict):
+        self.config = config_dict
+        self.hardware_setup()
+
+    def get_status(self):
+        """Returns the interface's current status"""
+        return dict(working=self.working, pump_working=self.pump_working,
+                    signals=cv.ordered_signals(self.signals))
+
+    def hardware_setup(self):
+        """Return a HardwareBackend namedtuple with sensor and driver.
+        Raise ConfigurationError if sensor or output name is not recognized,
+        or modules supporting the hardware backends cannot be imported."""
+        # cache the interface configuration
+        config = self.config
+        # set up the sensor - either sysfs or RPi.GPIO
+        try:
+            driver = config['sensor_driver']
+            sensor = (SysfsSensor if driver == 'sysfs'
+                      else RPiGPIOSensor if driver == 'rpi_gpio'
+                      else RPiGPIOSensor if driver == 'gpio'
+                      else None)
+            self.sensor = sensor(config)
+        except TypeError:
+            raise exc.HWConfigError('Unknown sensor: {}.'.format(driver))
+        # output setup:
+        try:
+            output_name = config['output_driver']
+            if output_name == 'smbus':
+                from rpi2caster_driver.smbus import SMBusOutput as output
+            elif output_name == 'wiringpi':
+                from rpi2caster_driver.wiringpi import WiringPiOutput as output
+            self.output = output(config)
+        except NameError:
+            raise exc.HWConfigError('Unknown output: {}.'.format(output_name))
+        except ImportError:
+            raise exc.HWConfigError('Module not installed for {}'
+                                    .format(output_name))
+
+    @check_mode
+    def start(self, mode):
+        """Start the machine.
+        Casting requires that the machine is running before proceeding."""
+        # don't let anyone else initialize an interface already initialized
+        if self.working:
+            raise exc.InterfaceBusy
+        # make sure the machine is turning before proceeding
+        if mode == CASTING:
+            self.motor_on()
+            try:
+                self.check_rotation()
+            except exc.MachineStopped:
+                # catch it here and turn off the motor
+                self.motor_off()
+                raise
+        # properly initialized => mark it as working
+        self.working = True
+
+    @check_mode
+    def stop(self, mode):
+        """Stop the machine."""
+        self.pump_stop()
+        self.valves_off()
+        self.signals = []
+        if mode == CASTING:
+            self.motor_off()
+        # release the interface so others can claim it
+        self.working = False
+
+    def check_pump(self):
+        """Check if the pump is working or not"""
+        def found(code):
+            """check if code was found in a combination"""
+            return set(code).issubset(signals)
+
+        # cache this to avoid double dictionary lookup for each check
+        signals = self.signals
+        if found('0075') or found('NK'):
+            return True
+        elif found('0005') or found('NJ'):
+            return False
+        else:
+            # state does not change
+            return self.pump_working
+
+    def check_rotation(self):
+        """Check whether the machine is turning. Measure the speed."""
+        timeout = self.config['startup_timeout']
+        cycles = 3
+        start_time = time.time()
+        for _ in range(cycles, 0, -1):
+            self.sensor.wait_for(AIR_ON, timeout=timeout)
+            self.sensor.wait_for(AIR_OFF, timeout=timeout)
+        end_time = time.time()
+        duration = end_time - start_time
+        # how fast is the machine turning?
+        rpm = round(cycles / duration, 2)
+        return dict(speed='{}rpm'.format(rpm))
+
+    def pump_stop(self):
+        """Stop the pump if it is working"""
+        timeout = self.config['pump_stop_timeout']
+        while self.pump_working:
+            try:
+                self.sensor.wait_for(AIR_ON, timeout=timeout)
+                self.valves_on(PUMP_STOP)
+                self.sensor.wait_for(AIR_OFF, timeout=timeout)
+                self.valves_off()
+                self.pump_working = False
+            except exc.MachineStopped:
+                self.valves_off()
+
+    def valves_off(self):
+        """Turn all valves off"""
+        self.output.valves_off()
+
+    def valves_on(self, signals):
+        """proxy for output's valves_on method"""
+        self.output.valves_on(signals)
+        self.signals = signals
+
+    def motor_on(self):
+        """Turn on the motor"""
+
+    def motor_off(self):
+        """Turn off the motor"""
+
+    @check_mode
+    @check_row16_mode
+    def send_signals(self, signals,
+                     mode=CASTING, row16_mode=ROW16_OFF, timeout=None):
+        """Send the signals to the caster/perforator.
+        Based on mode:
+            casting: sensor ON, valves ON, sensor OFF, valves OFF;
+            punching: valves ON, wait t1, valves OFF, wait t2
+            testing: valves OFF, valves ON
+
+        In the punching mode, if there are less than two signals,
+        an additional O+15 signal will be activated. Otherwise the paper ribbon
+        advance mechanism won't work."""
+        # make sure the interface is initialized
+        if not self.working:
+            raise exc.InterfaceNotStarted
+        # allow using a custom timeout
+        timeout = timeout or self.config['sensor_timeout']
+        # first adjust the signals based on the row16 addressing mode
+        conversions = {ROW16_OFF: cv.strip_16,
+                       ROW16_HMN: cv.convert_hmn,
+                       ROW16_KMN: cv.convert_kmn,
+                       ROW16_UNITSHIFT: cv.convert_unitshift}
+        signals = conversions[row16_mode](signals)
+        signals = cv.convert_o15(signals)
+        if mode == CASTING:
+            # casting: sensor-driven valves on and off
+            signals = cv.strip_o15(signals)
+            try:
+                self.sensor.wait_for(AIR_ON, timeout=timeout)
+                self.valves_on(signals)
+                self.pump_working = self.check_pump()
+                self.sensor.wait_for(AIR_OFF, timeout=timeout)
+                self.valves_off()
+            except exc.MachineStopped:
+                # run recursively if needed
+                self.pump_stop()
+                raise
+
+        elif mode == MANUAL_PUNCHING:
+            # semi-automatic perforator (advanced by keypress)
+            signals = cv.add_missing_o15(signals)
+            self.valves_on(signals)
+            time.sleep(self.config['punching_on_time'])
+            self.valves_off()
+
+        elif mode == PUNCHING:
+            # timer-driven perforator
+            signals = cv.add_missing_o15(signals)
+            self.valves_on(signals)
+            time.sleep(self.config['punching_on_time'])
+            self.valves_off()
+            time.sleep(self.config['punching_off_time'])
+
+        elif mode == TESTING:
+            # send signals to valves and keep them on
+            self.valves_off()
+            self.valves_on(signals)
 
 
 if __name__ == '__main__':
