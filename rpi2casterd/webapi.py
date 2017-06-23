@@ -62,13 +62,13 @@ def list_interfaces():
 def interface_page(prefix):
     """Interface's browsable API"""
     url = partial(url_for, prefix=prefix)
-    return '\n'.join('config: {}'.format(url('get_config')),
-                     'status: {}'.format(url('get_status')),
-                     'wedges: {}'.format(url('get_wedge_positions')),
-                     'valves off: {}'.format(url('valves_off')),
-                     'water: {}'.format(url('water_control')),
-                     'air: {}'.format(url('air_control')),
-                     'motor: {}'.format(url('motor_control')))
+    return '\n'.join(['config: {}'.format(url('get_config')),
+                      'status: {}'.format(url('get_status')),
+                      'wedges: {}'.format(url('get_wedge_positions')),
+                      'valves off: {}'.format(url('valves_off')),
+                      'water: {}'.format(url('water_control')),
+                      'air: {}'.format(url('air_control')),
+                      'motor: {}'.format(url('motor_control'))])
 
 
 @APP.route('/interfaces/<prefix>/config')
