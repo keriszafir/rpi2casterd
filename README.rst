@@ -139,6 +139,17 @@ So:
 1. replace D with EF in the original combination,
 2. add D if addressing the row 16.
 
+Advanced features
+---------------
+The Raspberry Pi based controller can be coupled with more devices than the basic functionality requires.
+
+The program supports configuring multiple control interfaces (i.e. sensor + valve sets).
+
+Apart from getting the machine cycle sensor state and sending signals to solenoid valves,
+the program can start and stop the machine's motor, control additional water and air cutoff valves,
+use an emergency stop button to stop the machine when something bad happens, and light a LED
+when the controller is trying to stop the caster's pump.
+
 API documentation
 =================
 to be added later...
