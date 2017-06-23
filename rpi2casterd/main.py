@@ -22,14 +22,16 @@ from rpi2casterd.webapi import INTERFACES, APP
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2casterd.conf'
 DEFAULTS = dict(listen_address='127.0.0.1:23017',
-                sensor_driver='rpi_gpio', output_driver='smbus',
+                output_driver='smbus',
                 shutdown_gpio='24', shutdown_command='shutdown -h now',
                 reboot_gpio='23', reboot_command='shutdown -r now',
                 startup_timeout='30', sensor_timeout='5',
                 pump_stop_timeout='120',
                 punching_on_time='0.2', punching_off_time='0.3',
                 debounce_milliseconds='25',
-                led_gpio='18', sensor_gpio='17',
+                led_gpio='18', sensor_gpio='17', error_led_gpio='26',
+                air_gpio='19', water_gpio='13', emergency_stop_gpio='22',
+                motor_start_gpio='5', motor_stop_gpio='6',
                 i2c_bus='1', mcp0_address='0x20', mcp1_address='0x21',
                 valve1='N,M,L,K,J,I,H,G',
                 valve2='F,S,E,D,0075,C,B,A',
@@ -57,6 +59,16 @@ DOUBLE_JUSTIFICATION = ['N', 'K', 'J', 'S', '0075', '0005']
 
 # Initialize the application
 GPIO.setmode(GPIO.BCM)
+
+
+def turn_on(gpio):
+    """Turn on a specified GPIO output"""
+    GPIO.output(gpio, ON)
+
+
+def turn_off(gpio):
+    """Turn off a specified GPIO output"""
+    GPIO.output(gpio, OFF)
 
 
 def check_mode(routine):
@@ -143,9 +155,9 @@ def daemon_setup():
     def blink(seconds=0.5, number=3):
         """Blinks the LED"""
         for _ in range(number):
-            GPIO.output(led_gpio, 0)
+            turn_off(led_gpio)
             time.sleep(seconds)
-            GPIO.output(led_gpio, 1)
+            turn_on(led_gpio)
             time.sleep(seconds)
 
     def signal_handler(*_):
@@ -157,7 +169,7 @@ def daemon_setup():
     # set the LED up
     led_gpio = cv.get('led_gpio', config, int)
     GPIO.setup(led_gpio, GPIO.OUT)
-    GPIO.output(led_gpio, 1)
+    turn_on(led_gpio)
     # set the buttons up
     shutdown_gpio = cv.get('shutdown_gpio', config, int)
     reboot_gpio = cv.get('reboot_gpio', config, int)
@@ -246,6 +258,8 @@ class Interface:
                 from rpi2casterd.smbus import SMBusOutput as output
             elif output_name == 'wiringpi':
                 from rpi2casterd.wiringpi import WiringPiOutput as output
+            else:
+                raise NameError
             self.output = output(config)
         except NameError:
             raise exc.HWConfigError('Unknown output: {}.'.format(output_name))
@@ -386,6 +400,8 @@ class Interface:
         to make sure that the pump is turned off.
         In case of failure, repeat."""
         timeout = self.config['pump_stop_timeout']
+        # turn on the emergency LED
+        turn_on(self.gpios['error_led'])
         while self.state['pump']:
             try:
                 # first time
@@ -402,6 +418,8 @@ class Interface:
                 self.state['pump'] = False
             except exc.MachineStopped:
                 self.valves_off()
+        # finished; LED off
+        turn_off(self.gpios['error_led'])
         # the 0005 wedge position changes as well, so update it
         self.state.update(wedge_0005=15)
 
@@ -418,24 +436,49 @@ class Interface:
         """Motor control:
             no value or None = get the motor state,
             anything evaluating to True or False = turn on or off"""
-        if value is not None:
-            self.state['motor'] = True if value else False
+        if value is None:
+            # do nothing
+            pass
+        elif value:
+            start_gpio = self.gpios['motor_start_gpio']
+            turn_on(start_gpio)
+            time.sleep(0.5)
+            turn_off(start_gpio)
+            self.state['motor'] = True
+        else:
+            stop_gpio = self.gpios['motor_stop']
+            turn_on(stop_gpio)
+            time.sleep(0.5)
+            turn_off(stop_gpio)
+            self.state['motor'] = False
         return dict(motor=self.state['motor'])
 
     def air_control(self, value=None):
         """Air supply control: master compressed air solenoid valve.
             no value or None = get the air state,
             anything evaluating to True or False = turn on or off"""
-        if value is not None:
-            self.state['air'] = True if value else False
+        if value is None:
+            pass
+        elif value:
+            turn_on(self.gpios['air'])
+            self.state['air'] = True
+        else:
+            turn_off(self.gpios['air'])
+            self.state['air'] = False
         return dict(air=self.state['air'])
 
     def water_control(self, value=None):
         """Cooling water control:
             no value or None = get the water valve state,
             anything evaluating to True or False = turn on or off"""
-        if value is not None:
-            self.state['water'] = True if value else False
+        if value is None:
+            pass
+        elif value:
+            turn_on(self.gpios['water'])
+            self.state['water'] = True
+        else:
+            turn_off(self.gpios['water'])
+            self.state['water'] = False
         return dict(water=self.state['water'])
 
     @check_mode

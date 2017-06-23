@@ -23,5 +23,5 @@ setup(name='rpi2casterd',
                    'Operating System :: POSIX :: Linux',
                    'Programming Language :: Python :: 3 :: Only',],
       entry_points={'console_scripts':['rpi2casterd = rpi2casterd.main:main']},
-      install_requires=['RPi.GPIO >= 0.6.3', 'Flask >= 0.12'],
+      install_requires=metadata.dependencies,
       zip_safe=True)

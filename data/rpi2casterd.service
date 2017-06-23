@@ -1,9 +1,11 @@
 [Unit]
-Description=rpi2caster-driver hardware interface control daemon for rpi2caster
+Description=rpi2casterd - hardware interface control daemon for rpi2caster
 After=ssh.service
 
 [Service]
-ExecStart=/usr/local/bin/rpi2caster-driver
+ExecStart=/usr/local/bin/rpi2casterd
+User=monotype
+Group=monotype
 Restart=on-abort
 
 [Install]
