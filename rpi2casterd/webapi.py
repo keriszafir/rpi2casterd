@@ -178,7 +178,7 @@ def air_control(interface):
         return interface.air_control()
 
 
-@APP.route('/interface/<prefix>/pump')
+@APP.route('/interfaces/<prefix>/pump')
 @handle_request
 def pump_status(interface):
     """Get a current pump working state."""
