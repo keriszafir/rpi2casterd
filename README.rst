@@ -35,15 +35,15 @@ Operation modes
 The interface / driver can operate in different modes, denoted by the ``mode``` parameter
 in the request's JSON payload. Depending on the mode, the behavior and signals sent vary.
 
-0 = testing
-~~~~~~~~~~~
+testing
+~~~~~~~
 All signals are sent as specified.
 No additional modifications are made (except for row 16 addressing, if needed).
 The driver closes any opened valves, then turns on the valves corresponding to the signals
 found in request, and returns a success message.
 
-1 = casting
-~~~~~~~~~~~
+casting
+~~~~~~~
 Signals O and 15 are stripped, as they are the signals the caster defaults to
 if no signal in the ribbon is found.
 When the machine is working, the interface driver:
@@ -61,8 +61,8 @@ the pump is working, and if this is the case, run a full signals send cycle with
 combination (NJS 0005 0075), which works both with unit-adding system on and off.
 After the pump stop procedure is completed, the interface replies with an error message.
 
-2 = punching
-~~~~~~~~~~~~
+punching
+~~~~~~~~
 This mode modifies the signals, so that at least two of them are always present in a combination.
 This way the pneumatic perforator from the Monotype keyboard can advance the ribbon.
 When less than two signals are present, the driver adds an extra O+15 signal driven by the 32nd valve
@@ -78,8 +78,8 @@ The control sequence is as follows:
 4. wait time_off for punches to come back down,
 5. return a success reply to the request.
 
-3 = manual punching
-~~~~~~~~~~~~~~~~~~~
+manual punching
+~~~~~~~~~~~~~~~
 As above, but the control behavior relies on the operator to advance the process:
 1. turn the valves on,
 2. wait time_on for the punches to go up,
@@ -99,13 +99,13 @@ Some Monotype casters (especially from 1960s and later) are equipped with specia
 attachments (either from the very beginning, or retrofitted) for addressing
 the additional row. There were three such systems.
 
-0 = off
-~~~~~~~
+off
+~~~
 This means that a sort will be cast from row 15 instead of 16.
 No modification to signals apart from replacing row 16 with 15.
 
-1 = HMN
-~~~~~~~
+HMN
+~~~
 The earliest system, devised by one of Monotype's customers.
 It is based on combined signals (similar to N+I, N+L addressing of two additional columns).
 For rows 1...15 no modifications are done.
@@ -117,8 +117,8 @@ For row 16, additional signals are introduced based on column:
 4. O (no signal) - add HMN
 5. {ABCDEFGIJKL} - add HM - HM{ABCDEFGIJKL}
 
-2 = KMN
-~~~~~~~
+KMN
+~~~
 Devised by Monotype and similar to HMN.
 The extra signals are a little bit different.
 
@@ -128,8 +128,8 @@ The extra signals are a little bit different.
 4. O (no signal) - add KMN
 5. {ABCDEFGHIJL} - add KM - KM{ABCDEFGHIJL}
 
-3 = unit shift
-~~~~~~~~~~~~~~
+unit shift
+~~~~~~~~~~
 Introduced by Monotype in 1963 and standard on all machines soon after.
 When the attachment is activated, a signal D is re-routed to an additional pin on
 the front pin block, which boosts the left-right (rows) matrix case draw rod,

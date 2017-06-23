@@ -45,9 +45,11 @@ CFG.read(CONFIGURATION_PATH)
 # Status symbols for convenience
 AIR_ON, AIR_OFF = True, False
 # Working modes
-ALL_MODES = TESTING, CASTING, PUNCHING, MANUAL_PUNCHING = 0, 1, 2, 3
+ALL_MODES = 'testing', 'casting', 'punching', 'manual punching'
+TESTING, CASTING, PUNCHING, MANUAL_PUNCHING = ALL_MODES
 # Row 16 addressing modes
-ALL_ROW16_MODES = ROW16_OFF, ROW16_HMN, ROW16_KMN, ROW16_UNITSHIFT = 0, 1, 2, 3
+ALL_ROW16_MODES = 'off', 'HMN', 'KMN', 'unit shift'
+ROW16_OFF, ROW16_HMN, ROW16_KMN, ROW16_UNITSHIFT = ALL_ROW16_MODES
 
 # Control combinations for the caster
 PUMP_STOP = ['N', 'J', 'S', '0005']

@@ -1,2 +1,2 @@
-include *.txt
+include *.txt *.md *.rst
 recursive-include data *.conf *.service
