@@ -5,17 +5,13 @@ Hardware driver and web API for rpi2caster
 ------------------------------------------
 
 This is a machine control daemon for the ``rpi2caster`` typesetting and casting software.
-It is supposed to run on a Raspberry Pi or a similar single-board computer featuring a general
-purpose input/output (GPIO) port. The Raspberry uses an output expander based on two
-MCP23017 chips to provide 32 additional outputs, used for controlling 32 solenoid valves,
+It is supposed to run on a Raspberry Pi (any model) with an output expander based on two
+MCP23017 chips to provide 32 additional outputs. These are connected to solenoid valves,
 which in turn send the pneumatic signals to a Monotype composition caster or tape punch.
 
-This driver uses one of several input backends for the MCP23017-based controller:
+This driver uses a ``RPi.GPIO`` library for GPIO control, 
 
-1. ``sysfs`` interface in Linux kernel,
-2. ``RPi.GPIO`` library.
-
-There are also several available output control backends:
+There are several available output control backends:
 
 1. SMBus (via ``smbus-cffi`` or ``smbus2`` package),
 2. ``WiringPi`` library.
