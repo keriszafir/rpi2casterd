@@ -468,10 +468,7 @@ class Interface:
             """check if code was found in a combination"""
             return set(code).issubset(signals)
 
-        # read the current state
         signals = self.state['signals']
-        pos_0075 = self.state['wedge_0075']
-        pos_0005 = self.state['wedge_0005']
 
         # check 0075: find the earliest row number or default to 15
         if found(['0075']) or found('NK'):
@@ -481,6 +478,9 @@ class Interface:
                     break
             else:
                 pos_0075 = 15
+        else:
+            # no change = current state
+            pos_0075 = self.state['wedge_0075']
 
         # check 0005: find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
@@ -490,6 +490,10 @@ class Interface:
                     break
             else:
                 pos_0005 = 15
+        else:
+            # no change = current state
+            pos_0005 = self.state['wedge_0005']
+
         # we know them now
         return dict(wedge_0075=pos_0075, wedge_0005=pos_0005)
 
