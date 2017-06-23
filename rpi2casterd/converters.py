@@ -6,35 +6,30 @@ COLUMNS = tuple('ABCDEFGHIJKLMNO')
 ROWS = tuple(str(x) for x in range(16, 0, -1))
 JUSTIFICATION = ('0005', '0075', 'S')
 # the signals in a sequence for parsing
-PARSED_SIGNALS = tuple(['0005', '0075', *(str(x) for x in range(16, 0, -1)),
-                        *'ABCDEFGHIJKLMNOS'])
-# the signals in a sequence for encoding
-ORDERED_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
-                         *(str(x) for x in range(1, 15)), 'O15'])
-# all Monotype signals
-SIGNALS = [*COLUMNS[:-1], *(str(x) for x in range(15)), 'O15', *JUSTIFICATION]
+INPUT_SIGNALS = tuple(['0005', '0075', *(str(x) for x in range(16, 0, -1)),
+                       *'ABCDEFGHIJKLMNOS'])
+# the signals for sending to the interface:
+# no signal 16; O and 15 is combined
+OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
+                        *(str(x) for x in range(1, 15)), 'O15'])
+
+
+def strings(input_string):
+    """Convert 'abc , def, 012' -> ['abc', 'def', '012']
+    (no case change; strip whitespace)."""
+    return [x.strip() for x in input_string.split(',')]
 
 
 def signals(input_string):
-    """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E']."""
+    """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
+    Allow only known defined signals."""
     raw = [x.strip().upper() for x in input_string.split(',')]
-    return [x for x in raw if x in SIGNALS]
-
-
-def integers(input_string):
-    """Convert '1,2,3,4,5' -> [1, 2, 3, 4, 5]"""
-    return [int(x.strip()) for x in input_string.split(',')]
+    return [x for x in raw if x in OUTPUT_SIGNALS]
 
 
 def lcstring(input_string):
     """Return a lowercase string stripped of all whitespace"""
     return input_string.strip().lower()
-
-
-def millis(input_string):
-    """Get milliseconds from a fractional value in seconds"""
-    seconds = float(lcstring(input_string))
-    return int(seconds * 1000)
 
 
 def anyint(input_string):
@@ -59,15 +54,14 @@ def parse_configuration(source):
     try:
         config = OrderedDict()
         # supported operation and row 16 addressing modes
-        modes = get('supported_modes', source, integers)
-        row16_modes = get('supported_row16_modes', source, integers)
+        modes = get('supported_modes', source, strings)
+        row16_modes = get('supported_row16_modes', source, strings)
         config['supported_modes'] = modes
         config['mode'] = modes[0]
         config['supported_row16_modes'] = row16_modes
         config['row16_mode'] = row16_modes[0]
 
-        # determine the sensor and output drivers
-        config['sensor_driver'] = get('sensor_driver', source, lcstring)
+        # determine the output driver
         config['output_driver'] = get('output_driver', source, lcstring)
 
         # get timings
@@ -77,9 +71,18 @@ def parse_configuration(source):
         config['punching_on_time'] = get('punching_on_time', source, float)
         config['punching_off_time'] = get('punching_off_time', source, float)
 
-        # interface settings: input
+        # interface settings: control GPIOs
         config['sensor_gpio'] = get('sensor_gpio', source, int)
-        config['input_bounce_time'] = get('input_bounce_time', source, float)
+        config['error_led_gpio'] = get('error_led_gpio', source, int)
+        config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, int)
+        config['motor_start_gpio'] = get('motor_start_gpio', source, int)
+        config['motor_stop_gpio'] = get('motor_stop_gpio', source, int)
+        config['water_gpio'] = get('water_gpio', source, int)
+        config['air_gpio'] = get('air_gpio', source, int)
+
+        # time (in milliseconds) for software debouncing
+        config['debounce_milliseconds'] = get('debounce_milliseconds',
+                                              source, int)
 
         # interface settings: output
         config['i2c_bus'] = get('i2c_bus', source, anyint)
@@ -115,12 +118,12 @@ def parse_signals(source):
     except AttributeError:
         _source = ''.join(str(x).upper() for x in source)
     # read the signals to know what's inside
-    return {s for s in PARSED_SIGNALS if find(s)}
+    return {s for s in INPUT_SIGNALS if find(s)}
 
 
 def ordered_signals(source):
     """Returns a list of arranged signals ready for display"""
-    arranged = deque(s for s in ORDERED_SIGNALS if s in source)
+    arranged = deque(s for s in OUTPUT_SIGNALS if s in source)
     # put NI, NL, NK, NJ, NKJ etc. at the front
     if 'N' in arranged:
         for other in 'JKLI':
