@@ -182,4 +182,4 @@ def air_control(interface):
 @handle_request
 def pump_status(interface):
     """Get a current pump working state."""
-    return interface.check_pump()
+    return dict(state=interface.check_pump())

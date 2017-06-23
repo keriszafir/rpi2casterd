@@ -71,17 +71,6 @@ def turn_off(gpio):
     GPIO.output(gpio, OFF)
 
 
-def return_dict(routine):
-    """Wrap the return value in a dictionary"""
-    @functools.wraps(routine)
-    def wrapper(*args, **kwargs):
-        """wraps the routine"""
-        retval = routine(*args, **kwargs)
-        if retval is not None:
-            return dict(value=retval)
-    return wrapper
-
-
 def check_mode(routine):
     """Check if the interface supports the desired operation mode"""
     @functools.wraps(routine)
@@ -349,7 +338,6 @@ class Interface:
         # release the interface so others can claim it
         self.state['working'] = False
 
-    @return_dict
     def check_pump(self):
         """Check if the pump is working or not"""
         def found(code):
@@ -453,7 +441,6 @@ class Interface:
         self.output.valves_on(signals)
         self.state['signals'] = signals
 
-    @return_dict
     def motor_control(self, value=None):
         """Motor control:
             no value or None = get the motor state,
@@ -473,9 +460,8 @@ class Interface:
             time.sleep(0.5)
             turn_off(stop_gpio)
             self.state['motor'] = False
-        return self.state['motor']
+        return dict(state=self.state['motor'])
 
-    @return_dict
     def air_control(self, value=None):
         """Air supply control: master compressed air solenoid valve.
             no value or None = get the air state,
@@ -488,9 +474,8 @@ class Interface:
         else:
             turn_off(self.gpios['air'])
             self.state['air'] = False
-        return self.state['air']
+        return dict(state=self.state['air'])
 
-    @return_dict
     def water_control(self, value=None):
         """Cooling water control:
             no value or None = get the water valve state,
@@ -503,7 +488,7 @@ class Interface:
         else:
             turn_off(self.gpios['water'])
             self.state['water'] = False
-        return self.state['water']
+        return dict(state=self.state['water'])
 
     @check_mode
     @check_row16_mode
