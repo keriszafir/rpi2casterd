@@ -81,6 +81,7 @@ The control sequence is as follows:
 manual punching
 ~~~~~~~~~~~~~~~
 As above, but the control behavior relies on the operator to advance the process:
+
 1. turn the valves on,
 2. wait time_on for the punches to go up,
 3. turn the valves off,
