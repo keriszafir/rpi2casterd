@@ -3,7 +3,7 @@
 
 from collections import OrderedDict
 from functools import wraps
-from flask import Flask, abort, jsonify
+from flask import Flask, abort, jsonify, url_for
 from flask.globals import request
 
 from rpi2casterd import exceptions as exc
@@ -55,7 +55,19 @@ def index():
 @APP.route('/interfaces')
 def list_interfaces():
     """Lists available interfaces"""
-    return jsonify({i: interface.name for i, interface in INTERFACES.items()})
+    return jsonify({i: str(interface) for i, interface in INTERFACES.items()})
+
+
+@APP.route('/interfaces/<prefix>')
+def interface_page(prefix):
+    """Interface's browsable API"""
+    return '\n'.join('config: {}'.format(url_for(get_config, prefix)),
+                     'status: {}'.format(url_for(get_status, prefix)),
+                     'wedges: {}'.format(url_for(get_wedge_positions, prefix)),
+                     'valves off: {}'.format(url_for(valves_off, prefix)),
+                     'water: {}'.format(url_for(water_control, prefix)),
+                     'air: {}'.format(url_for(air_control, prefix)),
+                     'motor: {}'.format(url_for(motor_control, prefix)))
 
 
 @APP.route('/interfaces/<prefix>/config')

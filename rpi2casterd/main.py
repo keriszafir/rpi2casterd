@@ -228,6 +228,9 @@ class Interface:
         # configure the hardware
         self.hardware_setup()
 
+    def __str__(self):
+        return 'Raspberry Pi interface ({})'.format(self.output.name)
+
     def get_status(self):
         """Returns the interface's current status"""
         state = self.state
