@@ -72,6 +72,13 @@ def get_status(interface):
     return interface.get_status()
 
 
+@APP.route('/interfaces/<prefix>/wedges')
+@handle_request
+def get_wedge_positions(interface):
+    """Get the current 0005 and 0075 justifying wedge positions."""
+    return interface.check_wedge_positions()
+
+
 @APP.route('/interfaces/<prefix>/start', methods=('POST',))
 @handle_request
 def start_machine(interface):
@@ -113,3 +120,45 @@ def valves_on(interface):
 def valves_off(interface):
     """Turns all valves off on the interface."""
     return interface.valves_off()
+
+
+@APP.route('/interfaces/<prefix>/water', methods=('GET', 'POST'))
+@handle_request
+def water_control(interface):
+    """Cooling water control:
+        GET or POST with no data: get status,
+        POST with any value: turn on or off.
+    """
+    if request.method == 'POST':
+        state = request.json
+        return interface.water_control(state)
+    else:
+        return interface.water_control()
+
+
+@APP.route('/interfaces/<prefix>/motor', methods=('GET', 'POST'))
+@handle_request
+def motor_control(interface):
+    """Motor control:
+        GET or POST with no data: get status,
+        POST with any value: turn on or off.
+    """
+    if request.method == 'POST':
+        state = request.json
+        return interface.motor_control(state)
+    else:
+        return interface.motor_control()
+
+
+@APP.route('/interfaces/<prefix>/air', methods=('GET', 'POST'))
+@handle_request
+def air_control(interface):
+    """Air supply control:
+        GET or POST with no data: get status,
+        POST with any value: turn on or off.
+    """
+    if request.method == 'POST':
+        state = request.json
+        return interface.air_control(state)
+    else:
+        return interface.air_control()

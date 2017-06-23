@@ -7,6 +7,7 @@ It communicates with client(s) via a JSON API and controls the machine
 using selectable backend libraries for greater configurability.
 """
 
+from collections import OrderedDict
 import configparser
 import io
 import functools
@@ -44,6 +45,7 @@ CFG.read(CONFIGURATION_PATH)
 
 # Status symbols for convenience
 AIR_ON, AIR_OFF = True, False
+ON, OFF = True, False
 # Working modes
 ALL_MODES = 'testing', 'casting', 'punching', 'manual punching'
 TESTING, CASTING, PUNCHING, MANUAL_PUNCHING = ALL_MODES
@@ -349,8 +351,10 @@ class RPiGPIOSensor:
 class Interface:
     """Hardware control interface"""
     sensor, output = None, None
-    working, pump_working = False, False
     signals = []
+    state = OrderedDict(signals=[], wedge_0005=15, wedge_0075=15,
+                        working=False, water=False, air=False,
+                        motor=False, pump=False)
 
     def __init__(self, config_dict):
         self.config = config_dict
@@ -358,8 +362,9 @@ class Interface:
 
     def get_status(self):
         """Returns the interface's current status"""
-        return dict(working=self.working, pump_working=self.pump_working,
-                    signals=cv.ordered_signals(self.signals))
+        state = OrderedDict(signals=cv.ordered_signals(self.signals))
+        state.update(self.state)
+        return state
 
     def hardware_setup(self):
         """Return a HardwareBackend namedtuple with sensor and driver.
@@ -396,30 +401,36 @@ class Interface:
         """Start the machine.
         Casting requires that the machine is running before proceeding."""
         # don't let anyone else initialize an interface already initialized
-        if self.working:
+        if self.state['working']:
             raise exc.InterfaceBusy
+        # turn on the compressed air
+        self.air_control(ON)
         # make sure the machine is turning before proceeding
         if mode == CASTING:
-            self.motor_on()
+            # turn on the cooling water and motor
+            self.water_control(ON)
+            self.motor_control(ON)
             try:
                 self.check_rotation()
             except exc.MachineStopped:
-                # catch it here and turn off the motor
-                self.motor_off()
+                # cleanup and pass the exception
+                self.stop(mode)
                 raise
         # properly initialized => mark it as working
-        self.working = True
+        self.state['working'] = True
 
     @check_mode
     def stop(self, mode):
         """Stop the machine."""
         self.pump_stop()
         self.valves_off()
-        self.signals = []
+        self.state['signals'] = []
         if mode == CASTING:
-            self.motor_off()
+            self.motor_control(OFF)
+            self.water_control(OFF)
+        self.air_control(OFF)
         # release the interface so others can claim it
-        self.working = False
+        self.state['working'] = False
 
     def check_pump(self):
         """Check if the pump is working or not"""
@@ -428,14 +439,14 @@ class Interface:
             return set(code).issubset(signals)
 
         # cache this to avoid double dictionary lookup for each check
-        signals = self.signals
-        if found('0075') or found('NK'):
+        signals = self.state['signals']
+        if found(['0075']) or found('NK'):
             return True
-        elif found('0005') or found('NJ'):
+        elif found(['0005']) or found('NJ'):
             return False
         else:
             # state does not change
-            return self.pump_working
+            return self.state['pump']
 
     def check_rotation(self):
         """Check whether the machine is turning. Measure the speed."""
@@ -451,18 +462,61 @@ class Interface:
         rpm = round(cycles / duration, 2)
         return dict(speed='{}rpm'.format(rpm))
 
+    def check_wedge_positions(self):
+        """Check the wedge positions and return them."""
+        def found(code):
+            """check if code was found in a combination"""
+            return set(code).issubset(signals)
+
+        # read the current state
+        signals = self.state['signals']
+        pos_0075 = self.state['wedge_0075']
+        pos_0005 = self.state['wedge_0005']
+
+        # check 0075: find the earliest row number or default to 15
+        if found(['0075']) or found('NK'):
+            for pos in range(1, 15):
+                if str(pos) in signals:
+                    pos_0075 = pos
+                    break
+            else:
+                pos_0075 = 15
+
+        # check 0005: find the earliest row number or default to 15
+        if found(['0005']) or found('NJ'):
+            for pos in range(1, 15):
+                if str(pos) in signals:
+                    pos_0005 = pos
+                    break
+            else:
+                pos_0005 = 15
+        # we know them now
+        return dict(wedge_0075=pos_0075, wedge_0005=pos_0005)
+
     def pump_stop(self):
-        """Stop the pump if it is working"""
+        """Stop the pump if it is working.
+        This function will send the pump stop combination (NJS 0005) twice
+        to make sure that the pump is turned off.
+        In case of failure, repeat."""
         timeout = self.config['pump_stop_timeout']
-        while self.pump_working:
+        while self.state['pump']:
             try:
+                # first time
                 self.sensor.wait_for(AIR_ON, timeout=timeout)
                 self.valves_on(PUMP_STOP)
                 self.sensor.wait_for(AIR_OFF, timeout=timeout)
                 self.valves_off()
-                self.pump_working = False
+                # second time
+                self.sensor.wait_for(AIR_ON, timeout=timeout)
+                self.valves_on(PUMP_STOP)
+                self.sensor.wait_for(AIR_OFF, timeout=timeout)
+                self.valves_off()
+                # successfully stopped
+                self.state['pump'] = False
             except exc.MachineStopped:
                 self.valves_off()
+        # the 0005 wedge position changes as well, so update it
+        self.state.update(wedge_0005=15)
 
     def valves_off(self):
         """Turn all valves off"""
@@ -471,13 +525,31 @@ class Interface:
     def valves_on(self, signals):
         """proxy for output's valves_on method"""
         self.output.valves_on(signals)
-        self.signals = signals
+        self.state['signals'] = signals
 
-    def motor_on(self):
-        """Turn on the motor"""
+    def motor_control(self, value=None):
+        """Motor control:
+            no value or None = get the motor state,
+            anything evaluating to True or False = turn on or off"""
+        if value is not None:
+            self.state['motor'] = True if value else False
+        return dict(motor=self.state['motor'])
 
-    def motor_off(self):
-        """Turn off the motor"""
+    def air_control(self, value=None):
+        """Air supply control: master compressed air solenoid valve.
+            no value or None = get the air state,
+            anything evaluating to True or False = turn on or off"""
+        if value is not None:
+            self.state['air'] = True if value else False
+        return dict(air=self.state['air'])
+
+    def water_control(self, value=None):
+        """Cooling water control:
+            no value or None = get the water valve state,
+            anything evaluating to True or False = turn on or off"""
+        if value is not None:
+            self.state['water'] = True if value else False
+        return dict(water=self.state['water'])
 
     @check_mode
     @check_row16_mode
@@ -493,10 +565,11 @@ class Interface:
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
         # make sure the interface is initialized
-        if not self.working:
+        if not self.state['working']:
             raise exc.InterfaceNotStarted
         # allow using a custom timeout
         timeout = timeout or self.config['sensor_timeout']
+
         # first adjust the signals based on the row16 addressing mode
         conversions = {ROW16_OFF: cv.strip_16,
                        ROW16_HMN: cv.convert_hmn,
@@ -504,13 +577,14 @@ class Interface:
                        ROW16_UNITSHIFT: cv.convert_unitshift}
         signals = conversions[row16_mode](signals)
         signals = cv.convert_o15(signals)
+
         if mode == CASTING:
             # casting: sensor-driven valves on and off
             signals = cv.strip_o15(signals)
             try:
                 self.sensor.wait_for(AIR_ON, timeout=timeout)
                 self.valves_on(signals)
-                self.pump_working = self.check_pump()
+                self.state.update(pump=self.check_pump())
                 self.sensor.wait_for(AIR_OFF, timeout=timeout)
                 self.valves_off()
             except exc.MachineStopped:
@@ -537,6 +611,8 @@ class Interface:
             # send signals to valves and keep them on
             self.valves_off()
             self.valves_on(signals)
+
+        self.state.update(self.check_wedge_positions)
 
 
 if __name__ == '__main__':
