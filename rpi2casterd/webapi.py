@@ -2,7 +2,7 @@
 """Flask web API for rpi2casterd"""
 
 from collections import OrderedDict
-from functools import wraps
+from functools import partial, wraps
 from flask import Flask, abort, jsonify, url_for
 from flask.globals import request
 
@@ -61,13 +61,14 @@ def list_interfaces():
 @APP.route('/interfaces/<prefix>')
 def interface_page(prefix):
     """Interface's browsable API"""
-    return '\n'.join('config: {}'.format(url_for(get_config, prefix)),
-                     'status: {}'.format(url_for(get_status, prefix)),
-                     'wedges: {}'.format(url_for(get_wedge_positions, prefix)),
-                     'valves off: {}'.format(url_for(valves_off, prefix)),
-                     'water: {}'.format(url_for(water_control, prefix)),
-                     'air: {}'.format(url_for(air_control, prefix)),
-                     'motor: {}'.format(url_for(motor_control, prefix)))
+    url = partial(url_for, prefix=prefix)
+    return '\n'.join('config: {}'.format(url(get_config)),
+                     'status: {}'.format(url(get_status)),
+                     'wedges: {}'.format(url(get_wedge_positions)),
+                     'valves off: {}'.format(url(valves_off)),
+                     'water: {}'.format(url(water_control)),
+                     'air: {}'.format(url(air_control)),
+                     'motor: {}'.format(url(motor_control)))
 
 
 @APP.route('/interfaces/<prefix>/config')
