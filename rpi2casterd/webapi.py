@@ -62,6 +62,7 @@ def list_interfaces():
 def interface_page(prefix):
     """Interface's browsable API"""
     url = partial(url_for, prefix=prefix)
+    '<a href = {{ url_for(find_question,question_id=1) }}>Question 1</a>'
     return '\n'.join(['config: {}'.format(url('get_config')),
                       'status: {}'.format(url('get_status')),
                       'wedges: {}'.format(url('get_wedge_positions')),
@@ -175,3 +176,10 @@ def air_control(interface):
         return interface.air_control(state)
     else:
         return interface.air_control()
+
+
+@APP.route('/interface/<prefix>/pump')
+@handle_request
+def pump_status(interface):
+    """Get a current pump working state."""
+    return interface.check_pump()

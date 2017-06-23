@@ -454,7 +454,7 @@ class Interface:
             time.sleep(0.5)
             turn_off(stop_gpio)
             self.state['motor'] = False
-        return dict(motor=self.state['motor'])
+        return self.state['motor']
 
     def air_control(self, value=None):
         """Air supply control: master compressed air solenoid valve.
@@ -468,7 +468,7 @@ class Interface:
         else:
             turn_off(self.gpios['air'])
             self.state['air'] = False
-        return dict(air=self.state['air'])
+        return self.state['air']
 
     def water_control(self, value=None):
         """Cooling water control:
@@ -482,7 +482,7 @@ class Interface:
         else:
             turn_off(self.gpios['water'])
             self.state['water'] = False
-        return dict(water=self.state['water'])
+        return self.state['water']
 
     @check_mode
     @check_row16_mode
