@@ -21,8 +21,7 @@ from rpi2casterd.webapi import INTERFACES, APP
 
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2casterd.conf'
-DEFAULTS = dict(listen_address='127.0.0.1:23017',
-                output_driver='smbus',
+DEFAULTS = dict(listen_address='0.0.0.0:23017', output_driver='smbus',
                 shutdown_gpio='24', shutdown_command='shutdown -h now',
                 reboot_gpio='23', reboot_command='shutdown -r now',
                 startup_timeout='30', sensor_timeout='5',
@@ -37,25 +36,13 @@ DEFAULTS = dict(listen_address='127.0.0.1:23017',
                 valve2='F,S,E,D,0075,C,B,A',
                 valve3='1,2,3,4,5,6,7,8',
                 valve4='9,10,11,12,13,14,0005,O15',
-                supported_modes='0,1,2,3',
-                supported_row16_modes='0,1,2,3')
+                supported_modes='testing, casting, punching, manual punching',
+                supported_row16_modes='off, HMN, KMN, unit shift')
 CFG = configparser.ConfigParser(defaults=DEFAULTS)
 CFG.read(CONFIGURATION_PATH)
 
-# Status symbols for convenience
-AIR_ON, AIR_OFF = True, False
+# Status for readability
 ON, OFF = True, False
-# Working modes
-ALL_MODES = 'testing', 'casting', 'punching', 'manual punching'
-TESTING, CASTING, PUNCHING, MANUAL_PUNCHING = ALL_MODES
-# Row 16 addressing modes
-ALL_ROW16_MODES = 'off', 'HMN', 'KMN', 'unit shift'
-ROW16_OFF, ROW16_HMN, ROW16_KMN, ROW16_UNITSHIFT = ALL_ROW16_MODES
-
-# Control combinations for the caster
-PUMP_STOP = ['N', 'J', 'S', '0005']
-PUMP_START = ['N', 'K', 'S', '0075']
-DOUBLE_JUSTIFICATION = ['N', 'K', 'J', 'S', '0075', '0005']
 
 # Initialize the application
 GPIO.setmode(GPIO.BCM)
@@ -291,7 +278,11 @@ class Interface:
             raise exc.UnsupportedMode(mode)
 
         # check and update the row 16 addressing mode
+        # testing and punching can use all modes
+        all_row16_modes = ('off', 'HMN', 'KMN', 'unit shift')
         if row16_mode in self.config['supported_row16_modes']:
+            self.row16_mode = row16_mode
+        elif self.mode != 'casting' and row16_mode in all_row16_modes:
             self.row16_mode = row16_mode
         elif not row16_mode:
             self.row16_mode = self.config['default_row16_mode']
@@ -301,7 +292,7 @@ class Interface:
         # turn on the compressed air
         self.air_control(ON)
         # make sure the machine is turning before proceeding
-        if self.mode == CASTING:
+        if self.mode == 'casting':
             # turn on the cooling water and motor
             self.water_control(ON)
             self.motor_control(ON)
@@ -316,23 +307,15 @@ class Interface:
 
     def stop(self):
         """Stop the machine."""
-        print('stopping pump...')
         self.pump_stop()
-        print('valves off...')
         self.valves_off()
-        print('zeroing signals...')
         self.state['signals'] = []
-        if self.mode == CASTING:
-            print('motor off...')
+        if self.mode == 'casting':
             self.motor_control(OFF)
-            print('water off...')
             self.water_control(OFF)
-        print('air off...')
         self.air_control(OFF)
         # release the interface so others can claim it
-        print('releasing interface')
         self.state['working'] = False
-        print('done')
 
     def check_pump(self):
         """Check if the pump is working or not"""
@@ -356,12 +339,12 @@ class Interface:
         cycles = 3
         start_time = time.time()
         for _ in range(cycles, 0, -1):
-            self.wait_for(AIR_ON, timeout=timeout)
-            self.wait_for(AIR_OFF, timeout=timeout)
+            self.wait_for(ON, timeout=timeout)
+            self.wait_for(OFF, timeout=timeout)
         end_time = time.time()
         duration = end_time - start_time
         # how fast is the machine turning?
-        rpm = round(cycles / duration, 2)
+        rpm = round(60 * cycles / duration, 2)
         self.state.update(speed='{}rpm'.format(rpm))
 
     def check_wedge_positions(self):
@@ -407,17 +390,18 @@ class Interface:
         timeout = self.config['pump_stop_timeout']
         # turn on the emergency LED
         turn_on(self.gpios['error_led'])
+        pump_stop = ['N', 'J', 'S', '0005']
         while self.state['pump']:
             try:
                 # first time
-                self.wait_for(AIR_ON, timeout=timeout)
-                self.valves_on(PUMP_STOP)
-                self.wait_for(AIR_OFF, timeout=timeout)
+                self.wait_for(ON, timeout=timeout)
+                self.valves_on(pump_stop)
+                self.wait_for(OFF, timeout=timeout)
                 self.valves_off()
                 # second time
-                self.wait_for(AIR_ON, timeout=timeout)
-                self.valves_on(PUMP_STOP)
-                self.wait_for(AIR_OFF, timeout=timeout)
+                self.wait_for(ON, timeout=timeout)
+                self.valves_on(pump_stop)
+                self.wait_for(OFF, timeout=timeout)
                 self.valves_off()
                 # successfully stopped
                 self.state['pump'] = False
@@ -509,35 +493,35 @@ class Interface:
         timeout = timeout or self.config['sensor_timeout']
 
         # first adjust the signals based on the row16 addressing mode
-        conversions = {ROW16_OFF: cv.strip_16,
-                       ROW16_HMN: cv.convert_hmn,
-                       ROW16_KMN: cv.convert_kmn,
-                       ROW16_UNITSHIFT: cv.convert_unitshift}
-        signals = conversions[self.row16_mode or ROW16_OFF](signals)
+        conversions = {'off': cv.strip_16,
+                       'HMN': cv.convert_hmn,
+                       'KMN': cv.convert_kmn,
+                       'unit shift': cv.convert_unitshift}
+        signals = conversions[self.row16_mode or 'off'](signals)
         signals = cv.convert_o15(signals)
 
-        if self.mode == CASTING:
+        if self.mode == 'casting':
             # casting: sensor-driven valves on and off
             signals = cv.strip_o15(signals)
             try:
-                self.wait_for(AIR_ON, timeout=timeout)
+                self.wait_for(ON, timeout=timeout)
                 self.valves_on(signals)
                 self.state.update(pump=self.check_pump())
-                self.wait_for(AIR_OFF, timeout=timeout)
+                self.wait_for(OFF, timeout=timeout)
                 self.valves_off()
             except exc.MachineStopped:
                 # run recursively if needed
                 self.pump_stop()
                 raise
 
-        elif self.mode == MANUAL_PUNCHING:
+        elif self.mode == 'manual punching':
             # semi-automatic perforator (advanced by keypress)
             signals = cv.add_missing_o15(signals)
             self.valves_on(signals)
             time.sleep(self.config['punching_on_time'])
             self.valves_off()
 
-        elif self.mode == PUNCHING:
+        elif self.mode == 'punching':
             # timer-driven perforator
             signals = cv.add_missing_o15(signals)
             self.valves_on(signals)
@@ -545,7 +529,7 @@ class Interface:
             self.valves_off()
             time.sleep(self.config['punching_off_time'])
 
-        elif self.mode == TESTING:
+        elif self.mode == 'testing':
             # send signals to valves and keep them on
             self.valves_off()
             self.valves_on(signals)
