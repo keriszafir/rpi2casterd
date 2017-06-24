@@ -74,14 +74,15 @@ def blink(gpio=None, seconds=0.5, times=3):
 def teardown():
     """Unregister the exported GPIOs"""
     # cleanup the registered interfaces
-    # ugly-iterate over a list of keys because we mutate the dict
-    interface_ids = [i for i in INTERFACES]
-    for interface_id in interface_ids:
-        interface = INTERFACES[interface_id]
-        interface.valves_off()
-        INTERFACES.pop(interface_id)
-    for led in LEDS.values():
-        turn_off(led)
+    for interface_id, interface in INTERFACES.items():
+        interface.stop()
+        INTERFACES[interface_id] = None
+    INTERFACES.clear()
+    # turn off and cleanup the LEDs
+    for led_name, led_gpio in LEDS.items():
+        turn_off(led_gpio)
+        LEDS[led_name] = None
+    LEDS.clear()
     GPIO.cleanup()
 
 
