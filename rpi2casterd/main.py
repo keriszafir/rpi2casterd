@@ -123,7 +123,7 @@ def teardown():
         interface = INTERFACES[interface_id]
         interface.valves_off()
         INTERFACES.pop(interface_id)
-    for led in LEDS:
+    for led in LEDS.values():
         turn_off(led)
     GPIO.cleanup()
 
