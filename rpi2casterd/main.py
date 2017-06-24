@@ -59,6 +59,7 @@ DOUBLE_JUSTIFICATION = ['N', 'K', 'J', 'S', '0075', '0005']
 
 # Initialize the application
 GPIO.setmode(GPIO.BCM)
+LEDS = dict()
 
 
 def turn_on(gpio):
@@ -69,6 +70,18 @@ def turn_on(gpio):
 def turn_off(gpio):
     """Turn off a specified GPIO output"""
     GPIO.output(gpio, OFF)
+
+
+def blink(gpio=None, seconds=0.5, times=3):
+    """Blinks the LED"""
+    led_gpio = LEDS.get(gpio)
+    if not led_gpio:
+        return
+    for _ in range(times):
+        turn_off(led_gpio)
+        time.sleep(seconds)
+        turn_on(led_gpio)
+        time.sleep(seconds)
 
 
 def check_mode(routine):
@@ -110,6 +123,8 @@ def teardown():
         interface = INTERFACES[interface_id]
         interface.valves_off()
         INTERFACES.pop(interface_id)
+    for led in LEDS:
+        turn_off(led)
     GPIO.cleanup()
 
 
@@ -143,7 +158,7 @@ def daemon_setup():
         # the button is between GPIO and GND i.e. pulled up - negative logic
         if not GPIO.input(shutdown_gpio):
             print('Shutting down...')
-            blink()
+            blink('ready')
             cmd = config.get('shutdown_command')
             subprocess.run(cv.command(cmd))
 
@@ -154,28 +169,19 @@ def daemon_setup():
         # the button is between GPIO and GND i.e. pulled up - negative logic
         if not GPIO.input(reboot_gpio):
             print('Rebooting...')
-            blink()
+            blink('ready')
             cmd = config.get('reboot_command')
             subprocess.run(cv.command(cmd))
 
-    def blink(seconds=0.5, number=3):
-        """Blinks the LED"""
-        for _ in range(number):
-            turn_off(led_gpio)
-            time.sleep(seconds)
-            turn_on(led_gpio)
-            time.sleep(seconds)
-
     def signal_handler(*_):
         """Exit gracefully if SIGINT or SIGTERM received"""
-        blink(0.2, 5)
         raise KeyboardInterrupt
 
     config = CFG.defaults()
     # set the LED up
     led_gpio = cv.get('led_gpio', config, int)
     GPIO.setup(led_gpio, GPIO.OUT)
-    turn_on(led_gpio)
+    LEDS['ready'] = led_gpio
     # set the buttons up
     shutdown_gpio = cv.get('shutdown_gpio', config, int)
     reboot_gpio = cv.get('reboot_gpio', config, int)
@@ -215,6 +221,9 @@ def main():
     except ValueError:
         address = CFG.defaults().get('listen_address')
         port = 23017
+    # all configured - it's ready to work
+    ready_led_gpio = LEDS.get('ready')
+    turn_on(ready_led_gpio)
     APP.run(address, port)
 
 
