@@ -188,8 +188,9 @@ def main():
 class Interface:
     """Hardware control interface"""
     def __init__(self, config_dict):
-        self.config = config_dict
-        self.mode, self.row16_mode = None, None
+        config = self.config = config_dict
+        self.mode = config['default_mode']
+        self.row16_mode = config['default_row16_mode']
         # initialize the interface with empty state
         self.state = OrderedDict(signals=[], wedge_0005=15, wedge_0075=15,
                                  working=False, water=False, air=False,

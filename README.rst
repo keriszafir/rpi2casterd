@@ -24,8 +24,8 @@ procedure begins.
 The program uses ``Flask`` to provide a rudimentary JSON API for caster control.
 It accepts POST requests to start and stop the machine, turn the valves on and off,
 and send specified signals to the caster or perforator.
-GET requests are used for obtaining the interface's state and configuration,
-water/air/motor/pump state and current justification wedge positions.
+GET requests are used for obtaining the interface's state current'supported modes,
+configuration, water/air/motor/pump state and current justification wedge positions.
 
 Operation modes
 ---------------
