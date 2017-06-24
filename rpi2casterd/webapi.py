@@ -110,16 +110,17 @@ def get_wedge_positions(interface):
 @handle_request
 def start_machine(interface):
     """Starts the machine"""
-    mode = request.get_json().get('mode')
-    return interface.start(mode=mode)
+    request_data = request.get_json()
+    mode = request_data.get('mode')
+    row16_mode = request_data.get('row16_mode')
+    return interface.start(mode=mode, row16_mode=row16_mode)
 
 
 @APP.route('/interfaces/<prefix>/stop', methods=('POST',))
 @handle_request
 def stop_machine(interface):
     """Stops the machine"""
-    mode = request.get_json().get('mode')
-    return interface.stop(mode=mode)
+    return interface.stop()
 
 
 @APP.route('/interfaces/<prefix>/send', methods=('POST',))
@@ -128,10 +129,8 @@ def send_signals(interface):
     """Sends the signals to the machine"""
     request_data = request.get_json() or {}
     signals = request_data.get('signals') or []
-    mode = request_data.get('mode')
-    row16_mode = request_data.get('row16_mode')
     codes = parse_signals(signals)
-    interface.send_signals(codes, mode=mode, row16_mode=row16_mode)
+    interface.send_signals(codes)
     return interface.state
 
 
