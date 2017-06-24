@@ -85,6 +85,17 @@ def interface_page(prefix):
                       'motor: {}'.format(url('motor_control'))])
 
 
+@APP.route('/interfaces/<prefix>/modes')
+@handle_request
+def get_modes(interface):
+    """Gets the interface's operation and row 16 addressing mode,
+    as well as supported operation / row 16 addressing modes"""
+    config = interface.config
+    return dict(mode=interface.mode, row16_mode=interface.row16_mode,
+                supported_modes=config['supported_modes'],
+                supported_row16_modes=config['supported_row16_modes'])
+
+
 @APP.route('/interfaces/<prefix>/config')
 @handle_request
 def get_config(interface):
