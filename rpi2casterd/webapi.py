@@ -46,6 +46,19 @@ def handle_request(routine):
     return wrapper
 
 
+def pass_state(routine):
+    """Get the state from request and pass it to the decorated function"""
+    @wraps(routine)
+    def wrapper(interface, *args, **kwargs):
+        """wraps the routine"""
+        if request.method == 'POST':
+            state = request.get_json().get('state')
+            return routine(interface, state, *args, **kwargs)
+        else:
+            return routine(interface, None, *args, **kwargs)
+    return wrapper
+
+
 @APP.route('/')
 def index():
     """Main page for rpi2caster interface"""
@@ -83,7 +96,7 @@ def get_config(interface):
 @handle_request
 def get_status(interface):
     """Gets the current interface status"""
-    return interface.get_status()
+    return interface.state
 
 
 @APP.route('/interfaces/<prefix>/wedges')
@@ -97,7 +110,7 @@ def get_wedge_positions(interface):
 @handle_request
 def start_machine(interface):
     """Starts the machine"""
-    mode = request.json.get('mode')
+    mode = request.get_json().get('mode')
     return interface.start(mode=mode)
 
 
@@ -105,7 +118,7 @@ def start_machine(interface):
 @handle_request
 def stop_machine(interface):
     """Stops the machine"""
-    mode = request.json.get('mode')
+    mode = request.get_json().get('mode')
     return interface.stop(mode=mode)
 
 
@@ -113,73 +126,71 @@ def stop_machine(interface):
 @handle_request
 def send_signals(interface):
     """Sends the signals to the machine"""
-    signals = request.json.get('signals')
-    mode = request.json.get('mode')
-    row16_mode = request.json.get('row16_mode')
+    request_data = request.get_json() or {}
+    signals = request_data.get('signals') or []
+    mode = request_data.get('mode')
+    row16_mode = request_data.get('row16_mode')
     codes = parse_signals(signals)
-    return interface.send_signals(codes, mode=mode, row16_mode=row16_mode)
+    interface.send_signals(codes, mode=mode, row16_mode=row16_mode)
+    return interface.state
 
 
 @APP.route('/interfaces/<prefix>/valves_on', methods=('POST',))
 @handle_request
 def valves_on(interface):
     """Turns specified valves on. Low-level control method."""
-    signals = request.json.get('signals')
+    signals = request.get_json().get('signals')
     codes = parse_signals(signals)
-    return interface.valves_on(codes)
+    interface.valves_on(codes)
+    return dict(signals=codes)
 
 
 @APP.route('/interfaces/<prefix>/valves_off', methods=('POST',))
 @handle_request
 def valves_off(interface):
     """Turns all valves off on the interface."""
-    return interface.valves_off()
+    interface.valves_off()
 
 
 @APP.route('/interfaces/<prefix>/water', methods=('GET', 'POST'))
 @handle_request
-def water_control(interface):
+@pass_state
+def water_control(interface, state):
     """Cooling water control:
         GET or POST with no data: get status,
         POST with any value: turn on or off.
     """
-    if request.method == 'POST':
-        state = request.json
-        return interface.water_control(state)
-    else:
-        return interface.water_control()
+    outcome = interface.water_control(state)
+    return dict(state=outcome)
 
 
 @APP.route('/interfaces/<prefix>/motor', methods=('GET', 'POST'))
 @handle_request
-def motor_control(interface):
+@pass_state
+def motor_control(interface, state):
     """Motor control:
         GET or POST with no data: get status,
         POST with any value: turn on or off.
     """
-    if request.method == 'POST':
-        state = request.json
-        return interface.motor_control(state)
-    else:
-        return interface.motor_control()
+    outcome = interface.motor_control(state)
+    return dict(state=outcome)
 
 
 @APP.route('/interfaces/<prefix>/air', methods=('GET', 'POST'))
 @handle_request
-def air_control(interface):
+@pass_state
+def air_control(interface, state):
     """Air supply control:
         GET or POST with no data: get status,
         POST with any value: turn on or off.
     """
-    if request.method == 'POST':
-        state = request.json
-        return interface.air_control(state)
-    else:
-        return interface.air_control()
+    outcome = interface.air_control(state)
+    return dict(state=outcome)
 
 
 @APP.route('/interfaces/<prefix>/pump')
 @handle_request
 def pump_status(interface):
     """Get a current pump working state."""
-    return dict(state=interface.check_pump())
+    outcome = interface.check_pump()
+    return dict(state=outcome)

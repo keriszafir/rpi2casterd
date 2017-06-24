@@ -246,13 +246,6 @@ class Interface:
     def __str__(self):
         return 'Raspberry Pi interface ({})'.format(self.output.name)
 
-    def get_status(self):
-        """Returns the interface's current status"""
-        state = self.state
-        signals = state['signals']
-        state.update(signals=cv.ordered_signals(signals))
-        return state
-
     def hardware_setup(self):
         """Configure the inputs and outputs.
         Raise ConfigurationError if output name is not recognized,
@@ -448,7 +441,9 @@ class Interface:
     def valves_on(self, signals):
         """proxy for output's valves_on method"""
         self.output.valves_on(signals)
-        self.state['signals'] = signals
+        ordered_signals = cv.ordered_signals(signals)
+        self.state['signals'] = ordered_signals
+        return ordered_signals
 
     def motor_control(self, value=None):
         """Motor control:
@@ -456,48 +451,51 @@ class Interface:
             anything evaluating to True or False = turn on or off"""
         if value is None:
             # do nothing
-            pass
+            return self.state['motor']
         elif value:
             start_gpio = self.gpios['motor_start_gpio']
             turn_on(start_gpio)
             time.sleep(0.5)
             turn_off(start_gpio)
             self.state['motor'] = True
+            return True
         else:
             stop_gpio = self.gpios['motor_stop']
             turn_on(stop_gpio)
             time.sleep(0.5)
             turn_off(stop_gpio)
             self.state['motor'] = False
-        return dict(state=self.state['motor'])
+            return False
 
     def air_control(self, value=None):
         """Air supply control: master compressed air solenoid valve.
             no value or None = get the air state,
             anything evaluating to True or False = turn on or off"""
         if value is None:
-            pass
+            return self.state['air']
         elif value:
             turn_on(self.gpios['air'])
             self.state['air'] = True
+            return True
         else:
             turn_off(self.gpios['air'])
             self.state['air'] = False
-        return dict(state=self.state['air'])
+            return False
 
     def water_control(self, value=None):
         """Cooling water control:
             no value or None = get the water valve state,
             anything evaluating to True or False = turn on or off"""
         if value is None:
-            pass
+            return self.state['water']
         elif value:
             turn_on(self.gpios['water'])
             self.state['water'] = True
+            return True
         else:
             turn_off(self.gpios['water'])
             self.state['water'] = False
-        return dict(state=self.state['water'])
+            return False
 
     @check_mode
     @check_row16_mode
@@ -560,7 +558,8 @@ class Interface:
             self.valves_off()
             self.valves_on(signals)
 
-        self.state.update(self.check_wedge_positions)
+        self.state.update(self.check_wedge_positions())
+        return signals
 
 
 if __name__ == '__main__':
