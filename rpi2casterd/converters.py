@@ -57,9 +57,15 @@ def parse_configuration(source):
         modes = get('supported_modes', source, strings)
         row16_modes = get('supported_row16_modes', source, strings)
         config['supported_modes'] = modes
-        config['mode'] = modes[0]
         config['supported_row16_modes'] = row16_modes
-        config['row16_mode'] = row16_modes[0]
+        # operation mode: first mode other than testing
+        # unless this is the only supported mode
+        if len(modes) > 1 and modes[0] == 'testing':
+            config['default_mode'] = modes[1]
+        else:
+            config['default_mode'] = modes[0]
+        # row 16 addressing mode: off by default
+        config['default_row16_mode'] = row16_modes[0]
 
         # determine the output driver
         config['output_driver'] = get('output_driver', source, lcstring)

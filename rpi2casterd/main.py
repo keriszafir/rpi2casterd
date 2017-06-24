@@ -84,36 +84,6 @@ def blink(gpio=None, seconds=0.5, times=3):
         time.sleep(seconds)
 
 
-def check_mode(routine):
-    """Check if the interface supports the desired operation mode"""
-    @functools.wraps(routine)
-    def wrapper(interface, *args, **kwargs):
-        """wraps the routine"""
-        mode = kwargs.get('mode')
-        supported_modes = interface.config['supported_modes']
-        if mode is not None and mode not in supported_modes:
-            raise exc.UnsupportedMode(mode)
-        return routine(interface, *args, **kwargs)
-    return wrapper
-
-
-def check_row16_mode(routine):
-    """Check if the interface supports the desired row 16 addressing mode"""
-    @functools.wraps(routine)
-    def wrapper(interface, *args, **kwargs):
-        """wraps the routine"""
-        mode = kwargs.get('mode')
-        row16_mode = kwargs.get('row16_mode')
-        if mode == CASTING:
-            supported_row16_modes = interface.config['supported_row16_modes']
-        else:
-            supported_row16_modes = ALL_ROW16_MODES
-        if row16_mode is not None and row16_mode not in supported_row16_modes:
-            raise exc.UnsupportedRow16Mode(row16_mode)
-        return routine(interface, *args, **kwargs)
-    return wrapper
-
-
 def teardown():
     """Unregister the exported GPIOs"""
     # cleanup the registered interfaces
@@ -231,6 +201,7 @@ class Interface:
     """Hardware control interface"""
     def __init__(self, config_dict):
         self.config = config_dict
+        self.mode, self.row16_mode = None, None
         # initialize the interface with empty state
         self.state = OrderedDict(signals=[], wedge_0005=15, wedge_0075=15,
                                  working=False, water=False, air=False,
@@ -304,17 +275,33 @@ class Interface:
                 # Emergency stop by keyboard
                 raise exc.MachineStopped
 
-    @check_mode
-    def start(self, mode):
+    def start(self, mode=None, row16_mode=None):
         """Start the machine.
         Casting requires that the machine is running before proceeding."""
         # don't let anyone else initialize an interface already initialized
         if self.state['working']:
             raise exc.InterfaceBusy
+
+        # check and update the operation mode
+        if mode in self.config['supported_modes']:
+            self.mode = mode
+        elif not mode:
+            self.mode = self.config['default_mode']
+        else:
+            raise exc.UnsupportedMode(mode)
+
+        # check and update the row 16 addressing mode
+        if row16_mode in self.config['supported_row16_modes']:
+            self.row16_mode = row16_mode
+        elif not row16_mode:
+            self.row16_mode = self.config['default_row16_mode']
+        else:
+            raise exc.UnsupportedRow16Mode(row16_mode)
+
         # turn on the compressed air
         self.air_control(ON)
         # make sure the machine is turning before proceeding
-        if mode == CASTING:
+        if self.mode == CASTING:
             # turn on the cooling water and motor
             self.water_control(ON)
             self.motor_control(ON)
@@ -322,18 +309,17 @@ class Interface:
                 self.check_rotation()
             except exc.MachineStopped:
                 # cleanup and pass the exception
-                self.stop(mode)
+                self.stop()
                 raise
         # properly initialized => mark it as working
         self.state['working'] = True
 
-    @check_mode
-    def stop(self, mode):
+    def stop(self):
         """Stop the machine."""
         self.pump_stop()
         self.valves_off()
         self.state['signals'] = []
-        if mode == CASTING:
+        if self.mode == CASTING:
             self.motor_control(OFF)
             self.water_control(OFF)
         self.air_control(OFF)
@@ -497,10 +483,7 @@ class Interface:
             self.state['water'] = False
             return False
 
-    @check_mode
-    @check_row16_mode
-    def send_signals(self, signals,
-                     mode=CASTING, row16_mode=ROW16_OFF, timeout=None):
+    def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         Based on mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -513,6 +496,7 @@ class Interface:
         # make sure the interface is initialized
         if not self.state['working']:
             raise exc.InterfaceNotStarted
+
         # allow using a custom timeout
         timeout = timeout or self.config['sensor_timeout']
 
@@ -521,10 +505,10 @@ class Interface:
                        ROW16_HMN: cv.convert_hmn,
                        ROW16_KMN: cv.convert_kmn,
                        ROW16_UNITSHIFT: cv.convert_unitshift}
-        signals = conversions[row16_mode](signals)
+        signals = conversions[self.row16_mode or ROW16_OFF](signals)
         signals = cv.convert_o15(signals)
 
-        if mode == CASTING:
+        if self.mode == CASTING:
             # casting: sensor-driven valves on and off
             signals = cv.strip_o15(signals)
             try:
@@ -538,14 +522,14 @@ class Interface:
                 self.pump_stop()
                 raise
 
-        elif mode == MANUAL_PUNCHING:
+        elif self.mode == MANUAL_PUNCHING:
             # semi-automatic perforator (advanced by keypress)
             signals = cv.add_missing_o15(signals)
             self.valves_on(signals)
             time.sleep(self.config['punching_on_time'])
             self.valves_off()
 
-        elif mode == PUNCHING:
+        elif self.mode == PUNCHING:
             # timer-driven perforator
             signals = cv.add_missing_o15(signals)
             self.valves_on(signals)
@@ -553,7 +537,7 @@ class Interface:
             self.valves_off()
             time.sleep(self.config['punching_off_time'])
 
-        elif mode == TESTING:
+        elif self.mode == TESTING:
             # send signals to valves and keep them on
             self.valves_off()
             self.valves_on(signals)
