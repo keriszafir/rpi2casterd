@@ -439,7 +439,7 @@ class Interface:
             # do nothing
             return self.state['motor']
         elif value:
-            start_gpio = self.gpios['motor_start_gpio']
+            start_gpio = self.gpios['motor_start']
             turn_on(start_gpio)
             time.sleep(0.5)
             turn_off(start_gpio)
