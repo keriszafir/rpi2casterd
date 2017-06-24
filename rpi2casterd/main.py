@@ -316,15 +316,23 @@ class Interface:
 
     def stop(self):
         """Stop the machine."""
+        print('stopping pump...')
         self.pump_stop()
+        print('valves off...')
         self.valves_off()
+        print('zeroing signals...')
         self.state['signals'] = []
         if self.mode == CASTING:
+            print('motor off...')
             self.motor_control(OFF)
+            print('water off...')
             self.water_control(OFF)
+        print('air off...')
         self.air_control(OFF)
         # release the interface so others can claim it
+        print('releasing interface')
         self.state['working'] = False
+        print('done')
 
     def check_pump(self):
         """Check if the pump is working or not"""
@@ -354,7 +362,7 @@ class Interface:
         duration = end_time - start_time
         # how fast is the machine turning?
         rpm = round(cycles / duration, 2)
-        return dict(speed='{}rpm'.format(rpm))
+        self.state.update(speed='{}rpm'.format(rpm))
 
     def check_wedge_positions(self):
         """Check the wedge positions and return them."""
