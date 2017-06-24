@@ -16,7 +16,7 @@ There are several available output control backends:
 1. SMBus (via ``smbus-cffi`` or ``smbus2`` package),
 2. ``WiringPi`` library.
 
-When ready to use, the daemon lights a LED on a specified GPIO.
+When ready to use, the daemon lights a LED on a specified "ready LED" GPIO.
 An additional functionality of this daemon is control over the power and reboot buttons.
 After one of these buttons is held for 2 seconds, the LED flashes and the shutdown or reboot
 procedure begins.
@@ -24,15 +24,18 @@ procedure begins.
 The program uses ``Flask`` to provide a rudimentary JSON API for caster control.
 It accepts POST requests to start and stop the machine, turn the valves on and off,
 and send specified signals to the caster or perforator.
+GET requests are used for obtaining the interface's state and configuration,
+water/air/motor/pump state and current justification wedge positions.
 
 Operation modes
 ---------------
 
-The interface / driver can operate in different modes, denoted by the ``mode``` parameter
-in the request's JSON payload. Depending on the mode, the behavior and signals sent vary.
+The interface / driver can operate in different modes, denoted by the ``mode`` parameter
+in the ``start`` request's JSON payload. Depending on the mode, the behavior and signals sent vary.
 
 testing
 ~~~~~~~
+
 All signals are sent as specified.
 No additional modifications are made (except for row 16 addressing, if needed).
 The driver closes any opened valves, then turns on the valves corresponding to the signals
@@ -40,6 +43,7 @@ found in request, and returns a success message.
 
 casting
 ~~~~~~~
+
 Signals O and 15 are stripped, as they are the signals the caster defaults to
 if no signal in the ribbon is found.
 When the machine is working, the interface driver:
@@ -59,6 +63,7 @@ After the pump stop procedure is completed, the interface replies with an error 
 
 punching
 ~~~~~~~~
+
 This mode modifies the signals, so that at least two of them are always present in a combination.
 This way the pneumatic perforator from the Monotype keyboard can advance the ribbon.
 When less than two signals are present, the driver adds an extra O+15 signal driven by the 32nd valve
@@ -76,6 +81,7 @@ The control sequence is as follows:
 
 manual punching
 ~~~~~~~~~~~~~~~
+
 As above, but the control behavior relies on the operator to advance the process:
 
 1. turn the valves on,
@@ -88,6 +94,17 @@ to the next combination.
 
 Additional row 16 addressing modes
 ----------------------------------
+
+A ``row16_mode`` parameter in the ``start`` request JSON sets the interface's
+row 16 addressing mode. Once the interface is working, this mode will not change.
+If ``mode`` is ``casting``, the choice of ``row16_mode`` is limited by the
+``supported_row16_modes`` configuration parameters. On the other hands, the ``testing``,
+``punching`` and ``manual punching`` modes can operate with all four row 16 addressing modes.
+Depending on the selection, the signals sent to valves will be changed to fit the control system in use.
+
+Why all this?
+~~~~~~~~~~~~~
+
 The typical Monotype matrix case contained 15 rows and 15 or 17 columns.
 In 1950s and 1960s a further extension by an additional row was introduced,
 which allowed more flexibility in defining the matrix case layouts, and
@@ -98,11 +115,13 @@ the additional row. There were three such systems.
 
 off
 ~~~
+
 This means that a sort will be cast from row 15 instead of 16.
 No modification to signals apart from replacing row 16 with 15.
 
 HMN
 ~~~
+
 The earliest system, devised by one of Monotype's customers.
 It is based on combined signals (similar to N+I, N+L addressing of two additional columns).
 For rows 1...15 no modifications are done.
@@ -116,6 +135,7 @@ For row 16, additional signals are introduced based on column:
 
 KMN
 ~~~
+
 Devised by Monotype and similar to HMN.
 The extra signals are a little bit different.
 
@@ -127,6 +147,7 @@ The extra signals are a little bit different.
 
 unit shift
 ~~~~~~~~~~
+
 Introduced by Monotype in 1963 and standard on all machines soon after.
 When the attachment is activated, a signal D is re-routed to an additional pin on
 the front pin block, which boosts the left-right (rows) matrix case draw rod,
@@ -141,6 +162,7 @@ So:
 
 Advanced features
 ---------------
+
 The Raspberry Pi based controller can be coupled with more devices than the basic functionality requires.
 
 The program supports configuring multiple control interfaces (i.e. sensor + valve sets).
@@ -152,4 +174,5 @@ when the controller is trying to stop the caster's pump.
 
 API documentation
 =================
+
 to be added later...
