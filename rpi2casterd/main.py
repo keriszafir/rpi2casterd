@@ -252,7 +252,7 @@ class Interface:
 
         def update_rpm(*_):
             """Update the RPM event counter"""
-            self.meter_events.appends(time.time())
+            self.meter_events.append(time.time())
 
         # set up the controls
         for gpio_name, direction in self.gpio_definitions.items():
