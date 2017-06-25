@@ -301,7 +301,7 @@ class Interface:
         start_time = time.time()
         timeout = timeout or self.config['sensor_timeout']
         while self.sensor_state != new_state:
-            if time() - start_time > timeout:
+            if time.time() - start_time > timeout:
                 raise exc.MachineStopped
 
     def mode_control(self, operation_mode=None, row16_mode=None):
