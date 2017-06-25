@@ -303,7 +303,6 @@ class Interface:
         while self.sensor_state != new_state:
             if time() - start_time > timeout:
                 raise exc.MachineStopped
-        return
 
     def mode_control(self, operation_mode=None, row16_mode=None):
         """Get or set the interface operation and row 16 addressing modes."""
