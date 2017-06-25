@@ -100,6 +100,17 @@ def handle_machine_stop(routine):
     return wrapper
 
 
+def handle_keyboard_interrupt(routine):
+    """Reraise KeyboardInterrupt as MachineStopped"""
+    @wraps(routine)
+    def wrapper(*args, **kwargs):
+        """wraps the routine"""
+        try:
+            return routine(*args, **kwargs)
+        except KeyboardInterrupt:
+            raise exc.MachineStopped
+
+
 def handle_exceptions(routine):
     """Run a routine with exception handling"""
     @wraps(routine)
@@ -276,6 +287,7 @@ class Interface:
             raise exc.HWConfigError('Module not installed for {}'
                                     .format(output_name))
 
+    @handle_keyboard_interrupt
     def wait_for(self, new_state, timeout=None):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
