@@ -175,8 +175,8 @@ def daemon_setup():
 
     # register callbacks for shutdown and reboot
     ev_det = GPIO.add_event_detect
-    ev_det(shutdown_gpio, GPIO.FALLING, callback=shutdown, bouncetime=2000)
-    ev_det(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=2000)
+    ev_det(shutdown_gpio, GPIO.FALLING, callback=shutdown, bouncetime=50)
+    ev_det(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=50)
 
     # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
@@ -235,6 +235,7 @@ class Interface:
                           motor=False, pump=False)
         # GPIO definitions (after setup, these will be actual GPIO numbers)
         self.gpios = dict()
+        self.sensor_state = None
         self.output = None
         # count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
@@ -252,9 +253,11 @@ class Interface:
             """Raises an exception to stop the machine"""
             raise exc.MachineStopped
 
-        def update_rpm(*_):
+        def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
-            self.meter_events.append(time.time())
+            self.sensor_state = GPIO.input(sensor_gpio)
+            if self.sensor_state:
+                self.meter_events.append(time.time())
 
         # set up the controls
         for gpio_name, direction in self.gpio_definitions.items():
@@ -269,8 +272,8 @@ class Interface:
                               callback=emergency_stop,
                               bouncetime=config['debounce_milliseconds'])
         # callback to update the RPM meter
-        GPIO.add_event_detect(self.gpios['sensor'], GPIO.RISING,
-                              callback=update_rpm,
+        GPIO.add_event_detect(self.gpios['sensor'], GPIO.BOTH,
+                              callback=update_sensor,
                               bouncetime=config['debounce_milliseconds'])
 
         # output setup:
@@ -295,20 +298,12 @@ class Interface:
         to the desired value (True or False).
         If no state change is registered in the given time,
         raise MachineStopped."""
-        sensor_gpio = self.gpios['sensor']
-        change = GPIO.RISING if new_state else GPIO.FALLING
-        debounce_milliseconds = self.config['debounce_milliseconds']
-        timeout_milliseconds = int(timeout * 1000)
-        while True:
-            with suppress(RuntimeError):
-                # all times are in milliseconds
-                channel = GPIO.wait_for_edge(sensor_gpio, change,
-                                             timeout=timeout_milliseconds,
-                                             bouncetime=debounce_milliseconds)
-                if channel is None:
-                    raise exc.MachineStopped
-                else:
-                    return
+        start_time = time.time()
+        timeout = timeout or self.config['sensor_timeout']
+        while self.sensor_state != new_state:
+            if time() - start_time > timeout:
+                raise exc.MachineStopped
+        return
 
     def mode_control(self, operation_mode=None, row16_mode=None):
         """Get or set the interface operation and row 16 addressing modes."""
