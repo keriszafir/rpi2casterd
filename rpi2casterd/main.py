@@ -255,7 +255,7 @@ class Interface:
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
             sensor_state = GPIO.input(sensor_gpio)
-            self.state['sensor'] = sensor_state
+            self.state['sensor'] = bool(sensor_state)
             if sensor_state:
                 self.meter_events.append(time.time())
 
