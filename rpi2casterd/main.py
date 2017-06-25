@@ -232,10 +232,9 @@ class Interface:
         # initialize the interface with empty state
         self.state = dict(signals=[], wedge_0005=15, wedge_0075=15,
                           working=False, water=False, air=False,
-                          motor=False, pump=False)
+                          motor=False, pump=False, sensor=False)
         # GPIO definitions (after setup, these will be actual GPIO numbers)
         self.gpios = dict()
-        self.sensor_state = None
         self.output = None
         # count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
@@ -255,8 +254,9 @@ class Interface:
 
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
-            self.sensor_state = GPIO.input(sensor_gpio)
-            if self.sensor_state:
+            sensor_state = GPIO.input(sensor_gpio)
+            self.state['sensor'] = sensor_state
+            if sensor_state:
                 self.meter_events.append(time.time())
 
         # set up the controls
@@ -300,7 +300,7 @@ class Interface:
         raise MachineStopped."""
         start_time = time.time()
         timeout = timeout or self.config['sensor_timeout']
-        while self.sensor_state != new_state:
+        while self.state['sensor'] != new_state:
             if time.time() - start_time > timeout:
                 raise exc.MachineStopped
 
