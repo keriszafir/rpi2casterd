@@ -303,7 +303,7 @@ class Interface:
         elif operation_mode == 'reset':
             default_mode = modes['default_operation_mode']
             new_modes['current_operation_mode'] = default_mode
-        elif mode:
+        elif operation_mode:
             raise exc.UnsupportedMode(operation_mode)
 
         # check and update the row 16 addressing mode
