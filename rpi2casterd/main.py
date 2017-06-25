@@ -292,7 +292,7 @@ class Interface:
                                     .format(output_name))
 
     @handle_keyboard_interrupt
-    def wait_for(self, new_state, timeout=None):
+    def wait_for_sensor(self, new_state, timeout=None):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -302,6 +302,8 @@ class Interface:
         while self.state['sensor'] != new_state:
             if time.time() - start_time > timeout:
                 raise exc.MachineStopped
+            # wait 10ms to ease the load on the CPU
+            time.sleep(0.01)
 
     def mode_control(self, operation_mode=None, row16_mode=None):
         """Get or set the interface operation and row 16 addressing modes."""
@@ -413,13 +415,13 @@ class Interface:
             # state does not change
             return self.state['pump']
 
-    def check_rotation(self):
-        """Check whether the machine is turning. Measure the speed."""
+    def check_rotation(self, revolutions=3):
+        """Check whether the machine is turning.
+        The machine must typically go 3 revolutions of the main shaft."""
         timeout = self.config['startup_timeout']
-        cycles = 3
-        for _ in range(cycles, 0, -1):
-            self.wait_for(ON, timeout=timeout)
-            self.wait_for(OFF, timeout=timeout)
+        for _ in range(revolutions, 0, -1):
+            self.wait_for_sensor(ON, timeout=timeout)
+            self.wait_for_sensor(OFF, timeout=timeout)
 
     def check_wedge_positions(self):
         """Check the wedge positions and return them."""
@@ -613,9 +615,9 @@ class Interface:
         wait for sensor to go OFF, turn off the valves."""
         casting_codes = cv.strip_o15(codes)
         timeout = timeout or self.config['sensor_timeout']
-        self.wait_for(ON, timeout=timeout)
+        self.wait_for_sensor(ON, timeout=timeout)
         self.valve_control(casting_codes)
-        self.wait_for(OFF, timeout=timeout)
+        self.wait_for_sensor(OFF, timeout=timeout)
         self.valve_control(OFF)
 
     def test(self, codes):
@@ -642,7 +644,7 @@ class Interface:
         turn off the valves and yield control back.
         The client will advance to the next combination."""
         punching_codes = cv.add_missing_o15(codes)
-        self.valves_control(punching_codes)
+        self.valve_control(punching_codes)
         time.sleep(self.config['punching_on_time'])
         self.valve_control(OFF)
 
