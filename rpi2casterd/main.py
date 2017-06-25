@@ -166,18 +166,19 @@ def daemon_setup():
     led_gpio = cv.get('led_gpio', config, int)
     GPIO.setup(led_gpio, GPIO.OUT)
     LEDS['ready'] = led_gpio
+
     # set the buttons up
     shutdown_gpio = cv.get('shutdown_gpio', config, int)
     reboot_gpio = cv.get('reboot_gpio', config, int)
     GPIO.setup(shutdown_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    # debounce time in milliseconds
-    millis = cv.get('debounce_milliseconds', config, int)
+
     # register callbacks for shutdown and reboot
     ev_det = GPIO.add_event_detect
-    ev_det(shutdown_gpio, GPIO.FALLING, callback=shutdown, bouncetime=millis)
-    ev_det(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=millis)
-    # Register callbacks for signal handlers
+    ev_det(shutdown_gpio, GPIO.FALLING, callback=shutdown, bouncetime=2000)
+    ev_det(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=2000)
+
+    # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
