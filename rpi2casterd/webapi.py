@@ -75,7 +75,6 @@ def list_interfaces():
 def interface_page(prefix):
     """Interface's browsable API"""
     url = partial(url_for, prefix=prefix)
-    '<a href = {{ url_for(find_question,question_id=1) }}>Question 1</a>'
     return '\n'.join(['config: {}'.format(url('get_config')),
                       'status: {}'.format(url('get_status')),
                       'wedges: {}'.format(url('get_wedge_positions')),
@@ -83,17 +82,6 @@ def interface_page(prefix):
                       'water: {}'.format(url('water_control')),
                       'air: {}'.format(url('air_control')),
                       'motor: {}'.format(url('motor_control'))])
-
-
-@APP.route('/interfaces/<prefix>/modes')
-@handle_request
-def get_modes(interface):
-    """Gets the interface's operation and row 16 addressing mode,
-    as well as supported operation / row 16 addressing modes"""
-    config = interface.config
-    return dict(mode=interface.mode, row16_mode=interface.row16_mode,
-                supported_modes=config['supported_modes'],
-                supported_row16_modes=config['supported_row16_modes'])
 
 
 @APP.route('/interfaces/<prefix>/config')
