@@ -239,6 +239,10 @@ class Interface:
             """Raises an exception to stop the machine"""
             raise exc.MachineStopped
 
+        def update_rpm():
+            """Update the RPM event counter"""
+            self.meter_events.appends(time.time())
+
         # set up the controls
         for gpio_name, direction in self.gpio_definitions.items():
             gpio_config_name = '{}_gpio'.format(gpio_name)
@@ -250,6 +254,10 @@ class Interface:
         # register a callback on emergency stop event
         GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.FALLING,
                               callback=emergency_stop,
+                              bouncetime=config['debounce_milliseconds'])
+        # callback to update the RPM meter
+        GPIO.add_event_detect(self.gpios['sensor'], GPIO.RISING,
+                              callback=update_rpm,
                               bouncetime=config['debounce_milliseconds'])
 
         # output setup:
@@ -286,8 +294,6 @@ class Interface:
                 if channel is None:
                     raise exc.MachineStopped
                 else:
-                    # update the revolutions-per-minute meter
-                    self.meter_events.append(time.time())
                     return
 
     def mode_control(self, operation_mode=None, row16_mode=None):
