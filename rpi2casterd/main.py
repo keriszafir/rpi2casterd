@@ -173,9 +173,17 @@ def daemon_setup():
     GPIO.setup(reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
     # register callbacks for shutdown and reboot
-    ev_det = GPIO.add_event_detect
-    ev_det(shutdown_gpio, GPIO.FALLING, callback=shutdown, bouncetime=50)
-    ev_det(reboot_gpio, GPIO.FALLING, callback=reboot, bouncetime=50)
+    # if some callback was already registered, hook up another function
+    try:
+        GPIO.add_event_detect(shutdown_gpio, GPIO.FALLING,
+                              callback=shutdown, bouncetime=50)
+    except RuntimeError:
+        GPIO.add_event_callback(shutdown_gpio, shutdown)
+    try:
+        GPIO.add_event_detect(reboot_gpio, GPIO.FALLING,
+                              callback=reboot, bouncetime=50)
+    except RuntimeError:
+        GPIO.add_event_callback(reboot_gpio, reboot)
 
     # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
