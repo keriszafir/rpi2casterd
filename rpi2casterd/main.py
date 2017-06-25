@@ -7,7 +7,6 @@ It communicates with client(s) via a JSON API and controls the machine
 using selectable backend libraries for greater configurability.
 """
 from collections import deque
-from contextlib import suppress
 from functools import partial, wraps
 import configparser
 import signal
@@ -371,8 +370,8 @@ class Interface:
         if not self.state['working']:
             # don't stop a non-working interface
             return
-        self.pump_stop()
-        self.valves_off()
+        self.pump_control(OFF)
+        self.valve_control(OFF)
         self.state['signals'] = []
         if self.modes['current_operation_mode'] == 'casting':
             self.motor_control(OFF)
@@ -457,58 +456,26 @@ class Interface:
         # we know them now
         return dict(wedge_0075=pos_0075, wedge_0005=pos_0005)
 
-    def pump_stop(self):
-        """Stop the pump if it is working.
-        This function will send the pump stop combination (NJS 0005) twice
-        to make sure that the pump is turned off.
-        In case of failure, repeat."""
-        if not self.state['pump']:
-            # that means the pump is not working, so why stop it?
-            return
-        # turn on the emergency LED
-        turn_on(self.gpios['error_led'])
-        pump_stop_code = ['N', 'J', 'S', '0005']
-        # don't change the current 0005 wedge position
-        wedge_position = self.state['wedge_0005']
-        pump_stop_code.append(str(wedge_position))
-        # different behaviour for these modes:
-        mode = self.modes['current_operation_mode']
-        timeout = self.config['pump_stop_timeout']
-        send_signals = {'casting': partial(self.cast, timeout=timeout),
-                        'testing': self.test,
-                        'punching': self.auto_punch,
-                        'manual punching': self.manual_punch}[mode]
+    def valve_control(self, state):
+        """Turn valves on or off, check valve status.
+        Accepts signals (turn on), False (turn off) or None (get the status)"""
+        if state:
+            self.output.valves_on(state)
+            self.state['signals'] = cv.ordered_signals(state)
+        elif state is None:
+            pass
+        else:
+            self.output.valves_off()
+        return self.state['signals']
 
-        # make sure the combination goes out twice for each try
-        # just to be sure
-        while self.state['pump']:
-            send_signals(pump_stop_code)
-            send_signals(pump_stop_code)
-            # no exception means that successfully stopped
-            self.state['pump'] = False
-
-        # finished; LED off
-        turn_off(self.gpios['error_led'])
-
-    def valves_off(self):
-        """Turn all valves off"""
-        self.output.valves_off()
-
-    def valves_on(self, signals):
-        """proxy for output's valves_on method"""
-        self.output.valves_on(signals)
-        ordered_signals = cv.ordered_signals(signals)
-        self.state['signals'] = ordered_signals
-        return ordered_signals
-
-    def motor_control(self, value=None):
+    def motor_control(self, state=None):
         """Motor control:
-            no value or None = get the motor state,
+            no state or None = get the motor state,
             anything evaluating to True or False = turn on or off"""
-        if value is None:
+        if state is None:
             # do nothing
             return self.state['motor']
-        elif value:
+        elif state:
             start_gpio = self.gpios['motor_start']
             turn_on(start_gpio)
             time.sleep(0.5)
@@ -523,13 +490,13 @@ class Interface:
             self.state['motor'] = False
             return False
 
-    def air_control(self, value=None):
+    def air_control(self, state=None):
         """Air supply control: master compressed air solenoid valve.
-            no value or None = get the air state,
+            no state or None = get the air state,
             anything evaluating to True or False = turn on or off"""
-        if value is None:
+        if state is None:
             return self.state['air']
-        elif value:
+        elif state:
             turn_on(self.gpios['air'])
             self.state['air'] = True
             return True
@@ -538,13 +505,13 @@ class Interface:
             self.state['air'] = False
             return False
 
-    def water_control(self, value=None):
+    def water_control(self, state=None):
         """Cooling water control:
-            no value or None = get the water valve state,
+            no state or None = get the water valve state,
             anything evaluating to True or False = turn on or off"""
-        if value is None:
+        if state is None:
             return self.state['water']
-        elif value:
+        elif state:
             turn_on(self.gpios['water'])
             self.state['water'] = True
             return True
@@ -553,8 +520,55 @@ class Interface:
             self.state['water'] = False
             return False
 
+    def pump_control(self, state=None):
+        """No state: get the pump status.
+        Anything evaluating to True or False: start or stop the pump"""
+        def start():
+            """Start the pump."""
+            pump_start_code = ['N', 'K', 'S', '0075']
+            # get the current 0075 wedge position and preserve it
+            wedge_position = self.state['wedge_0075']
+            pump_start_code.append(str(wedge_position))
+            # start the pump
+            self.send_signals(pump_start_code)
+
+        def stop():
+            """Stop the pump if it is working.
+            This function will send the pump stop combination (NJS 0005) twice
+            to make sure that the pump is turned off.
+            In case of failure, repeat."""
+            if not self.state['pump']:
+                # that means the pump is not working, so why stop it?
+                return
+
+            # turn on the emergency LED
+            turn_on(self.gpios['error_led'])
+            pump_stop_code = ['N', 'J', 'S', '0005']
+
+            # don't change the current 0005 wedge position
+            wedge_position = self.state['wedge_0005']
+            pump_stop_code.append(str(wedge_position))
+
+            # use longer timeout
+            timeout = self.config['pump_stop_timeout']
+
+            # try as long as necessary
+            while self.state['pump']:
+                self.send_signals(pump_stop_code, timeout=timeout)
+
+            # finished; LED off
+            turn_off(self.gpios['error_led'])
+
+        if state is None:
+            pass
+        elif state:
+            start()
+        else:
+            stop()
+        return self.state['pump']
+
     @handle_machine_stop
-    def send_signals(self, signals):
+    def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         Based on mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -581,7 +595,8 @@ class Interface:
 
         # based on operation mode, decide what to do with the signals
         mode = self.modes['current_operation_mode']
-        control_machine = {'casting': self.cast, 'testing': self.test,
+        control_machine = {'casting': partial(self.cast, timeout=timeout),
+                           'testing': self.test,
                            'punching': self.auto_punch,
                            'manual punching': self.manual_punch}[mode]
 
@@ -599,14 +614,14 @@ class Interface:
         casting_codes = cv.strip_o15(codes)
         timeout = timeout or self.config['sensor_timeout']
         self.wait_for(ON, timeout=timeout)
-        self.valves_on(casting_codes)
+        self.valve_control(casting_codes)
         self.wait_for(OFF, timeout=timeout)
-        self.valves_off()
+        self.valve_control(OFF)
 
     def test(self, codes):
         """Turn off any previous combination, then send signals."""
-        self.valves_off()
-        self.valves_on(codes)
+        self.valve_control(OFF)
+        self.valve_control(codes)
 
     def auto_punch(self, codes):
         """Timerdriven ribbon perforator.
@@ -615,9 +630,9 @@ class Interface:
         then turn off the valves and wait for them to go down
         ("punching_off_time")."""
         punching_codes = cv.add_missing_o15(codes)
-        self.valves_on(punching_codes)
+        self.valve_control(punching_codes)
         time.sleep(self.config['punching_on_time'])
-        self.valves_off()
+        self.valve_control(OFF)
         time.sleep(self.config['punching_off_time'])
 
     def manual_punch(self, codes):
@@ -627,9 +642,9 @@ class Interface:
         turn off the valves and yield control back.
         The client will advance to the next combination."""
         punching_codes = cv.add_missing_o15(codes)
-        self.valves_on(punching_codes)
+        self.valves_control(punching_codes)
         time.sleep(self.config['punching_on_time'])
-        self.valves_off()
+        self.valve_control(OFF)
 
 
 if __name__ == '__main__':

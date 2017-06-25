@@ -9,6 +9,9 @@ from flask.globals import request
 from rpi2casterd import exceptions as exc
 from rpi2casterd.converters import parse_signals
 
+# method names for convenience
+GET, PUT, POST = 'GET', 'PUT', 'POST'
+
 APP = Flask('rpi2caster')
 INTERFACES = {}
 
@@ -51,7 +54,7 @@ def pass_state(routine):
     @wraps(routine)
     def wrapper(interface, *args, **kwargs):
         """wraps the routine"""
-        if request.method == 'POST':
+        if request.method in (POST, PUT):
             state = request.get_json().get('state')
             return routine(interface, state, *args, **kwargs)
         else:
@@ -129,13 +132,13 @@ def stop_machine(interface):
     return interface.stop()
 
 
-@APP.route('/interfaces/<prefix>/modes', methods=('GET', 'POST'))
+@APP.route('/interfaces/<prefix>/modes', methods=(GET, POST, PUT))
 @handle_request
 def mode_control(interface):
     """Get or set the interface's operation and row 16 addressing modes.
     GET: gets the modes,
     POST: sets one or both modes."""
-    if request.method == 'POST':
+    if request.method in (POST, PUT):
         request_data = request.get_json()
         row16_mode = request_data.get('row16_mode')
         operation_mode = request_data.get('operation_mode')
@@ -144,35 +147,35 @@ def mode_control(interface):
         return interface.mode_control()
 
 
-@APP.route('/interfaces/<prefix>/send', methods=('POST',))
+@APP.route('/interfaces/<prefix>/signals', methods=(GET, POST, PUT))
 @handle_request
 def send_signals(interface):
     """Sends the signals to the machine"""
-    request_data = request.get_json() or {}
-    signals = request_data.get('signals') or []
-    codes = parse_signals(signals)
-    interface.send_signals(codes)
-    return interface.state
+    if request.method in (POST, PUT):
+        request_data = request.get_json() or {}
+        signals = request_data.get('signals') or []
+        codes = parse_signals(signals)
+        interface.send_signals(codes)
+        return interface.state
+    else:
+        signals = interface.state['signals']
+        return dict(signals=signals)
 
 
-@APP.route('/interfaces/<prefix>/valves_on', methods=('POST',))
+@APP.route('/interface/<prefix>/valves', methods=(GET, POST, PUT))
 @handle_request
-def valves_on(interface):
-    """Turns specified valves on. Low-level control method."""
-    signals = request.get_json().get('signals')
-    codes = parse_signals(signals)
-    interface.valves_on(codes)
-    return dict(signals=codes)
+@pass_state
+def valve_control(interface, state):
+    """Control the solenoid valves.
+    state: None = get status,
+           False = turn all valves off,
+           list of signals = turn specified valves on.
+    """
+    outcome = interface.valve_control(state)
+    return dict(signals=outcome)
 
 
-@APP.route('/interfaces/<prefix>/valves_off', methods=('POST',))
-@handle_request
-def valves_off(interface):
-    """Turns all valves off on the interface."""
-    interface.valves_off()
-
-
-@APP.route('/interfaces/<prefix>/water', methods=('GET', 'POST'))
+@APP.route('/interfaces/<prefix>/water', methods=(GET, POST, PUT))
 @handle_request
 @pass_state
 def water_control(interface, state):
@@ -184,7 +187,7 @@ def water_control(interface, state):
     return dict(state=outcome)
 
 
-@APP.route('/interfaces/<prefix>/motor', methods=('GET', 'POST'))
+@APP.route('/interfaces/<prefix>/motor', methods=(GET, POST, PUT))
 @handle_request
 @pass_state
 def motor_control(interface, state):
@@ -196,7 +199,7 @@ def motor_control(interface, state):
     return dict(state=outcome)
 
 
-@APP.route('/interfaces/<prefix>/air', methods=('GET', 'POST'))
+@APP.route('/interfaces/<prefix>/air', methods=(GET, POST, PUT))
 @handle_request
 @pass_state
 def air_control(interface, state):
@@ -208,9 +211,10 @@ def air_control(interface, state):
     return dict(state=outcome)
 
 
-@APP.route('/interfaces/<prefix>/pump')
+@APP.route('/interfaces/<prefix>/pump', methods=(GET, POST, PUT))
 @handle_request
-def pump_status(interface):
+@pass_state
+def pump_control(interface, state):
     """Get a current pump working state."""
-    outcome = interface.check_pump()
+    outcome = interface.pump_control()
     return dict(state=outcome)
