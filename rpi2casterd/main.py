@@ -347,6 +347,9 @@ class Interface:
     @handle_machine_stop
     def stop(self):
         """Stop the machine."""
+        if not self.state['working']:
+            # don't stop a non-working interface
+            return
         self.pump_stop()
         self.valves_off()
         self.state['signals'] = []
