@@ -266,14 +266,24 @@ class Interface:
             GPIO.setup(gpio_number, direction)
             self.gpios[gpio_name] = gpio_number
 
-        # register a callback on emergency stop event
-        GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.FALLING,
-                              callback=emergency_stop,
-                              bouncetime=config['debounce_milliseconds'])
-        # callback to update the RPM meter
-        GPIO.add_event_detect(self.gpios['sensor'], GPIO.BOTH,
-                              callback=update_sensor,
-                              bouncetime=config['debounce_milliseconds'])
+        try:
+            # register a callback on emergency stop event
+            GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.FALLING,
+                                  callback=emergency_stop,
+                                  bouncetime=config['debounce_milliseconds'])
+        except RuntimeError:
+            # event already registered
+            GPIO.add_event_callback(self.gpios['emergency_stop'],
+                                    emergency_stop)
+
+        try:
+            # register a callback to update the RPM meter
+            GPIO.add_event_detect(self.gpios['sensor'], GPIO.BOTH,
+                                  callback=update_sensor,
+                                  bouncetime=config['debounce_milliseconds'])
+        except RuntimeError:
+            # event already registered
+            GPIO.add_event_callback(self.gpios['sensor'], update_sensor)
 
         # output setup:
         try:
