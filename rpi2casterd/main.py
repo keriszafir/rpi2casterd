@@ -235,11 +235,11 @@ class Interface:
         """Configure the inputs and outputs.
         Raise ConfigurationError if output name is not recognized,
         or modules supporting the hardware backends cannot be imported."""
-        def emergency_stop():
+        def emergency_stop(*_):
             """Raises an exception to stop the machine"""
             raise exc.MachineStopped
 
-        def update_rpm():
+        def update_rpm(*_):
             """Update the RPM event counter"""
             self.meter_events.appends(time.time())
 
