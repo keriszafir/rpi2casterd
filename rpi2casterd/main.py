@@ -6,6 +6,7 @@ and listens on its address(es) on a specified port using the HTTP protocol.
 It communicates with client(s) via a JSON API and controls the machine
 using selectable backend libraries for greater configurability.
 """
+from collections import deque
 from contextlib import suppress
 from functools import partial, wraps
 import configparser
@@ -222,6 +223,8 @@ class Interface:
         # GPIO definitions (after setup, these will be actual GPIO numbers)
         self.gpios = dict()
         self.output = None
+        # count photocell ON events for rpm meter
+        self.meter_events = deque(maxlen=3)
         # configure the hardware
         self.hardware_setup(config)
 
@@ -283,6 +286,8 @@ class Interface:
                 if channel is None:
                     raise exc.MachineStopped
                 else:
+                    # update the revolutions-per-minute meter
+                    self.meter_events.append(time.time())
                     return
 
     def mode_control(self, operation_mode=None, row16_mode=None):
@@ -333,6 +338,8 @@ class Interface:
         if self.state['working']:
             raise exc.InterfaceBusy
 
+        # reset the RPM counter
+        self.meter_events.clear()
         # turn on the compressed air
         self.air_control(ON)
         # make sure the machine is turning before proceeding
@@ -360,6 +367,23 @@ class Interface:
         # release the interface so others can claim it
         self.state['working'] = False
 
+    def rpm(self):
+        """Speed meter for rpi2casterd"""
+        events = self.meter_events
+        sensor_timeout = self.config['sensor_timeout']
+        try:
+            # how long in seconds is it from the first to last event?
+            duration = events[-1] - events[0]
+            if not duration or duration > sensor_timeout:
+                # single event or waited too long
+                return 0
+            per_second = len(events) / duration
+            rpm = round(per_second * 60, 2)
+            return rpm
+        except IndexError:
+            # not enough events / measurement points
+            return 0
+
     def check_pump(self):
         """Check if the pump is working or not"""
         def found(code):
@@ -380,15 +404,9 @@ class Interface:
         """Check whether the machine is turning. Measure the speed."""
         timeout = self.config['startup_timeout']
         cycles = 3
-        start_time = time.time()
         for _ in range(cycles, 0, -1):
             self.wait_for(ON, timeout=timeout)
             self.wait_for(OFF, timeout=timeout)
-        end_time = time.time()
-        duration = end_time - start_time
-        # how fast is the machine turning?
-        rpm = round(60 * cycles / duration, 2)
-        self.state.update(speed='{}rpm'.format(rpm))
 
     def check_wedge_positions(self):
         """Check the wedge positions and return them."""

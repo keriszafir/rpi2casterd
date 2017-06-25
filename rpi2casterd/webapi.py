@@ -95,7 +95,17 @@ def get_config(interface):
 @handle_request
 def get_status(interface):
     """Gets the current interface status"""
-    return interface.state
+    retval = dict()
+    retval.update(interface.state)
+    retval.update(speed='{}rpm'.format(interface.rpm()))
+    return retval
+
+
+@APP.route('/interfaces/<prefix>/rpm')
+@handle_request
+def get_speed(interface):
+    """Measure the current RPM"""
+    return dict(speed='{}rpm'.format(interface.rpm()))
 
 
 @APP.route('/interfaces/<prefix>/wedges')
