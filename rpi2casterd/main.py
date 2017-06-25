@@ -92,7 +92,7 @@ def handle_machine_stop(routine):
     def wrapper(interface, *args, **kwargs):
         """wraps the routine"""
         try:
-            return interface.routine(*args, **kwargs)
+            return routine(interface, *args, **kwargs)
         except exc.MachineStopped:
             interface.stop()
             raise
