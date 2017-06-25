@@ -109,6 +109,7 @@ def handle_keyboard_interrupt(routine):
             return routine(*args, **kwargs)
         except KeyboardInterrupt:
             raise exc.MachineStopped
+    return wrapper
 
 
 def handle_exceptions(routine):
