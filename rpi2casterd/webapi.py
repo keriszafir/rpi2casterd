@@ -117,21 +117,33 @@ def get_wedge_positions(interface):
     return interface.check_wedge_positions()
 
 
-@APP.route('/interfaces/<prefix>/start', methods=('POST',))
+@APP.route('/interfaces/<prefix>/start')
 @handle_request
 def start_machine(interface):
     """Starts the machine"""
-    request_data = request.get_json()
-    mode = request_data.get('mode')
-    row16_mode = request_data.get('row16_mode')
-    return interface.start(mode=mode, row16_mode=row16_mode)
+    return interface.start()
 
 
-@APP.route('/interfaces/<prefix>/stop', methods=('POST',))
+@APP.route('/interfaces/<prefix>/stop')
 @handle_request
 def stop_machine(interface):
     """Stops the machine"""
     return interface.stop()
+
+
+@APP.route('/interfaces/<prefix>/modes', methods=('GET', 'POST'))
+@handle_request
+def mode_control(interface):
+    """Get or set the interface's operation and row 16 addressing modes.
+    GET: gets the modes,
+    POST: sets one or both modes."""
+    if request.method == 'POST':
+        request_data = request.get_json()
+        row16_mode = request_data.get('row16_mode')
+        operation_mode = request_data.get('operation_mode')
+        return interface.mode_control(operation_mode, row16_mode)
+    else:
+        return interface.mode_control()
 
 
 @APP.route('/interfaces/<prefix>/send', methods=('POST',))

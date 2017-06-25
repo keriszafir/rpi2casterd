@@ -23,15 +23,49 @@ procedure begins.
 
 The program uses ``Flask`` to provide a rudimentary JSON API for caster control.
 It accepts POST requests to start and stop the machine, turn the valves on and off,
-and send specified signals to the caster or perforator.
-GET requests are used for obtaining the interface's state current'supported modes,
+change the operation and row 16 addressing modes and send specified signals to the caster or perforator.
+GET requests are used for obtaining the interface's state current, default and supported modes,
 configuration, water/air/motor/pump state and current justification wedge positions.
+
+Initializing
+------------
+
+When starting to work with the interface, change its mode of operation or row 16 addressing.
+If a new mode is unsupported by the interface's configuration (for example, the device is meant
+for being installed on a caster without any row 16 attachments), the ``modes`` request will get an
+error message, stating that a mode we want to use is not supported.
+
+Starting
+--------
+
+The interface needs to be started up in order to work. The startup procedure ensures that:
+
+1. the interface has not been claimed by any other client,
+2. air and (for casting only) water and motor is turned on, if the hardware supports this,
+3. (for casting) the machine is actually turning,
+4. the interface will be claimed until released by the ``stop`` method.
+
+Starting is done explicitly by a GET request to ``/start``, or implicitly
+by trying to send signals to the interface if it's not started yet.
+
+Stopping
+--------
+
+Stopping the interface ensures that:
+
+1. air and (for casting) water and motor is turned off,
+2. if the pump is working, it is stopped,
+3. the interface is released for the future clients to claim.
+
+Stopping is done by a GET request to ``/stop``.
+In case of casting, if the machine stops turning, the stop procedure is done automatically.
+Also, if the controller has an emergency stop button, pressing it will stop the machine immediately.
 
 Operation modes
 ---------------
 
 The interface / driver can operate in different modes, denoted by the ``mode`` parameter
-in the ``start`` request's JSON payload. Depending on the mode, the behavior and signals sent vary.
+in the ``modes`` POST request's JSON payload. Depending on the mode, the behavior and signals sent vary.
 
 testing
 ~~~~~~~
@@ -95,7 +129,7 @@ to the next combination.
 Additional row 16 addressing modes
 ----------------------------------
 
-A ``row16_mode`` parameter in the ``start`` request JSON sets the interface's
+A ``row16_mode`` parameter in the ``modes`` POST request JSON sets the interface's
 row 16 addressing mode. Once the interface is working, this mode will not change.
 If ``mode`` is ``casting``, the choice of ``row16_mode`` is limited by the
 ``supported_row16_modes`` configuration parameters. On the other hands, the ``testing``,
@@ -161,7 +195,7 @@ So:
 2. add D if addressing the row 16.
 
 Advanced features
----------------
+-----------------
 
 The Raspberry Pi based controller can be coupled with more devices than the basic functionality requires.
 

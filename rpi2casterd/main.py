@@ -6,10 +6,9 @@ and listens on its address(es) on a specified port using the HTTP protocol.
 It communicates with client(s) via a JSON API and controls the machine
 using selectable backend libraries for greater configurability.
 """
-
-from collections import OrderedDict
+from contextlib import suppress
+from functools import partial, wraps
 import configparser
-import functools
 import signal
 import subprocess
 import time
@@ -86,9 +85,23 @@ def teardown():
     GPIO.cleanup()
 
 
+def handle_machine_stop(routine):
+    """Ensure that when MachineStopped occurs, the interface will run
+    its stop() method."""
+    @wraps(routine)
+    def wrapper(interface, *args, **kwargs):
+        """wraps the routine"""
+        try:
+            return interface.routine(*args, **kwargs)
+        except exc.MachineStopped:
+            interface.stop()
+            raise
+    return wrapper
+
+
 def handle_exceptions(routine):
     """Run a routine with exception handling"""
-    @functools.wraps(routine)
+    @wraps(routine)
     def wrapper(*args, **kwargs):
         """wraps the routine"""
         try:
@@ -187,40 +200,54 @@ def main():
 
 class Interface:
     """Hardware control interface"""
+    gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
+                            error_led=GPIO.OUT, air=GPIO.OUT, water=GPIO.OUT,
+                            motor_stop=GPIO.OUT, motor_start=GPIO.OUT)
+
     def __init__(self, config_dict):
         config = self.config = config_dict
-        self.mode = config['default_mode']
-        self.row16_mode = config['default_row16_mode']
+        # what modes can and will this interface work with?
+        # start with default values
+        modes = dict(default_operation_mode=config['default_mode'],
+                     default_row16_mode=config['default_row16_mode'],
+                     current_operation_mode=config['default_mode'],
+                     current_row16_mode=config['default_row16_mode'],
+                     supported_operation_modes=config['supported_modes'],
+                     supported_row16_modes=config['supported_row16_modes'])
+        self.modes = modes
         # initialize the interface with empty state
-        self.state = OrderedDict(signals=[], wedge_0005=15, wedge_0075=15,
-                                 working=False, water=False, air=False,
-                                 motor=False, pump=False)
+        self.state = dict(signals=[], wedge_0005=15, wedge_0075=15,
+                          working=False, water=False, air=False,
+                          motor=False, pump=False)
         # GPIO definitions (after setup, these will be actual GPIO numbers)
-        self.gpios = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
-                          error_led=GPIO.OUT, air=GPIO.OUT, water=GPIO.OUT,
-                          motor_stop=GPIO.OUT, motor_start=GPIO.OUT)
+        self.gpios = dict()
         self.output = None
         # configure the hardware
-        self.hardware_setup()
+        self.hardware_setup(config)
 
     def __str__(self):
         return 'Raspberry Pi interface ({})'.format(self.output.name)
 
-    def hardware_setup(self):
+    def hardware_setup(self, config):
         """Configure the inputs and outputs.
         Raise ConfigurationError if output name is not recognized,
         or modules supporting the hardware backends cannot be imported."""
-        config = self.config
+        def emergency_stop():
+            """Raises an exception to stop the machine"""
+            raise exc.MachineStopped
 
         # set up the controls
-        gpio_settings = dict()
-        for gpio_name, direction in self.gpios.items():
+        for gpio_name, direction in self.gpio_definitions.items():
             gpio_config_name = '{}_gpio'.format(gpio_name)
             gpio_number = config[gpio_config_name]
             # configure the GPIO
             GPIO.setup(gpio_number, direction)
-            gpio_settings[gpio_name] = gpio_number
-        self.gpios.update(gpio_settings)
+            self.gpios[gpio_name] = gpio_number
+
+        # register a callback on emergency stop event
+        GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.FALLING,
+                              callback=emergency_stop,
+                              bouncetime=config['debounce_milliseconds'])
 
         # output setup:
         try:
@@ -248,7 +275,7 @@ class Interface:
         debounce_milliseconds = self.config['debounce_milliseconds']
         timeout_milliseconds = int(timeout * 1000)
         while True:
-            try:
+            with suppress(RuntimeError):
                 # all times are in milliseconds
                 channel = GPIO.wait_for_edge(sensor_gpio, change,
                                              timeout=timeout_milliseconds,
@@ -257,62 +284,73 @@ class Interface:
                     raise exc.MachineStopped
                 else:
                     return
-            except RuntimeError:
-                # In case RuntimeError: Error waiting for edge is raised...
-                continue
-            except (KeyboardInterrupt, EOFError):
-                # Emergency stop by keyboard
-                raise exc.MachineStopped
 
-    def start(self, mode=None, row16_mode=None):
+    def mode_control(self, operation_mode=None, row16_mode=None):
+        """Get or set the interface operation and row 16 addressing modes."""
+        modes = self.modes
+        new_modes = dict()
+
+        # check if the interface is in casting mode
+        # this will be overriden if mode changes to something different
+        casting_mode = modes['current_operation_mode'] == 'casting'
+
+        # check and update the operation mode
+        if operation_mode in modes['supported_operation_modes']:
+            # change an operation mode, but don't commit it yet...
+            new_modes['current_operation_mode'] = operation_mode
+            # ...and check if it's going to be casting
+            casting_mode = operation_mode == 'casting'
+        elif operation_mode == 'reset':
+            default_mode = modes['default_operation_mode']
+            new_modes['current_operation_mode'] = default_mode
+        else:
+            raise exc.UnsupportedMode(operation_mode)
+
+        # check and update the row 16 addressing mode
+        # testing and punching can use all modes
+        all_row16_modes = ('off', 'HMN', 'KMN', 'unit shift')
+        if row16_mode in modes['supported_row16_modes']:
+            # casting modes are limited by configuration
+            new_modes['current_row16_mode'] = row16_mode
+        elif not casting_mode and row16_mode in all_row16_modes:
+            # allow any addressing mode for testing and manual/auto punching
+            new_modes['current_row16_mode'] = row16_mode
+        elif row16_mode == 'reset':
+            default_row16_mode = modes['default_row16_mode']
+            new_modes['current_row16_mode'] = default_row16_mode
+        else:
+            raise exc.UnsupportedRow16Mode(row16_mode)
+
+        # no exceptions occurred, everything went OK = set new modes
+        self.modes.update(new_modes)
+        return self.modes
+
+    @handle_machine_stop
+    def start(self):
         """Start the machine.
         Casting requires that the machine is running before proceeding."""
         # don't let anyone else initialize an interface already initialized
         if self.state['working']:
             raise exc.InterfaceBusy
 
-        # check and update the operation mode
-        if mode in self.config['supported_modes']:
-            self.mode = mode
-        elif not mode:
-            self.mode = self.config['default_mode']
-        else:
-            raise exc.UnsupportedMode(mode)
-
-        # check and update the row 16 addressing mode
-        # testing and punching can use all modes
-        all_row16_modes = ('off', 'HMN', 'KMN', 'unit shift')
-        if row16_mode in self.config['supported_row16_modes']:
-            self.row16_mode = row16_mode
-        elif self.mode != 'casting' and row16_mode in all_row16_modes:
-            self.row16_mode = row16_mode
-        elif not row16_mode:
-            self.row16_mode = self.config['default_row16_mode']
-        else:
-            raise exc.UnsupportedRow16Mode(row16_mode)
-
         # turn on the compressed air
         self.air_control(ON)
         # make sure the machine is turning before proceeding
-        if self.mode == 'casting':
+        if self.modes['current_operation_mode'] == 'casting':
             # turn on the cooling water and motor
             self.water_control(ON)
             self.motor_control(ON)
-            try:
-                self.check_rotation()
-            except exc.MachineStopped:
-                # cleanup and pass the exception
-                self.stop()
-                raise
+            self.check_rotation()
         # properly initialized => mark it as working
         self.state['working'] = True
 
+    @handle_machine_stop
     def stop(self):
         """Stop the machine."""
         self.pump_stop()
         self.valves_off()
         self.state['signals'] = []
-        if self.mode == 'casting':
+        if self.modes['current_operation_mode'] == 'casting':
             self.motor_control(OFF)
             self.water_control(OFF)
         self.air_control(OFF)
@@ -389,30 +427,33 @@ class Interface:
         This function will send the pump stop combination (NJS 0005) twice
         to make sure that the pump is turned off.
         In case of failure, repeat."""
-        timeout = self.config['pump_stop_timeout']
+        if not self.state['pump']:
+            # that means the pump is not working, so why stop it?
+            return
         # turn on the emergency LED
         turn_on(self.gpios['error_led'])
-        pump_stop = ['N', 'J', 'S', '0005']
+        pump_stop_code = ['N', 'J', 'S', '0005']
+        # don't change the current 0005 wedge position
+        wedge_position = self.state['wedge_0005']
+        pump_stop_code.append(str(wedge_position))
+        # different behaviour for these modes:
+        mode = self.modes['current_operation_mode']
+        timeout = self.config['pump_stop_timeout']
+        send_signals = {'casting': partial(self.cast, timeout=timeout),
+                        'testing': self.test,
+                        'punching': self.auto_punch,
+                        'manual punching': self.manual_punch}[mode]
+
+        # make sure the combination goes out twice for each try
+        # just to be sure
         while self.state['pump']:
-            try:
-                # first time
-                self.wait_for(ON, timeout=timeout)
-                self.valves_on(pump_stop)
-                self.wait_for(OFF, timeout=timeout)
-                self.valves_off()
-                # second time
-                self.wait_for(ON, timeout=timeout)
-                self.valves_on(pump_stop)
-                self.wait_for(OFF, timeout=timeout)
-                self.valves_off()
-                # successfully stopped
-                self.state['pump'] = False
-            except exc.MachineStopped:
-                self.valves_off()
+            send_signals(pump_stop_code)
+            send_signals(pump_stop_code)
+            # no exception means that successfully stopped
+            self.state['pump'] = False
+
         # finished; LED off
         turn_off(self.gpios['error_led'])
-        # the 0005 wedge position changes as well, so update it
-        self.state.update(wedge_0005=15)
 
     def valves_off(self):
         """Turn all valves off"""
@@ -477,7 +518,8 @@ class Interface:
             self.state['water'] = False
             return False
 
-    def send_signals(self, signals, timeout=None):
+    @handle_machine_stop
+    def send_signals(self, signals):
         """Send the signals to the caster/perforator.
         Based on mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -491,53 +533,68 @@ class Interface:
         if not self.state['working']:
             raise exc.InterfaceNotStarted
 
-        # allow using a custom timeout
-        timeout = timeout or self.config['sensor_timeout']
-
-        # first adjust the signals based on the row16 addressing mode
-        conversions = {'off': cv.strip_16,
-                       'HMN': cv.convert_hmn,
-                       'KMN': cv.convert_kmn,
-                       'unit shift': cv.convert_unitshift}
-        signals = conversions[self.row16_mode or 'off'](signals)
+        # based on row 16 addressing mode,
+        # decide which signal conversion should be applied
+        row16_mode = self.modes['current_row16_mode']
+        conversion = {'off': cv.strip_16,
+                      'HMN': cv.convert_hmn,
+                      'KMN': cv.convert_kmn,
+                      'unit shift': cv.convert_unitshift}[row16_mode]
+        signals = conversion(signals)
+        # if O or 15 is found in signals, convert it to O15
         signals = cv.convert_o15(signals)
 
-        if self.mode == 'casting':
-            # casting: sensor-driven valves on and off
-            signals = cv.strip_o15(signals)
-            try:
-                self.wait_for(ON, timeout=timeout)
-                self.valves_on(signals)
-                self.state.update(pump=self.check_pump())
-                self.wait_for(OFF, timeout=timeout)
-                self.valves_off()
-            except exc.MachineStopped:
-                # run recursively if needed
-                self.pump_stop()
-                raise
+        # based on operation mode, decide what to do with the signals
+        mode = self.modes['current_operation_mode']
+        control_machine = {'casting': self.cast, 'testing': self.test,
+                           'punching': self.auto_punch,
+                           'manual punching': self.manual_punch}[mode]
 
-        elif self.mode == 'manual punching':
-            # semi-automatic perforator (advanced by keypress)
-            signals = cv.add_missing_o15(signals)
-            self.valves_on(signals)
-            time.sleep(self.config['punching_on_time'])
-            self.valves_off()
-
-        elif self.mode == 'punching':
-            # timer-driven perforator
-            signals = cv.add_missing_o15(signals)
-            self.valves_on(signals)
-            time.sleep(self.config['punching_on_time'])
-            self.valves_off()
-            time.sleep(self.config['punching_off_time'])
-
-        elif self.mode == 'testing':
-            # send signals to valves and keep them on
-            self.valves_off()
-            self.valves_on(signals)
-
+        # test/cast/punch the signals
+        control_machine(signals)
+        self.state.update(pump=self.check_pump())
         self.state.update(self.check_wedge_positions())
         return signals
+
+    def cast(self, codes, timeout=None):
+        """Monotype composition caster.
+
+        Wait for sensor to go ON, turn on the valves,
+        wait for sensor to go OFF, turn off the valves."""
+        casting_codes = cv.strip_o15(codes)
+        timeout = timeout or self.config['sensor_timeout']
+        self.wait_for(ON, timeout=timeout)
+        self.valves_on(casting_codes)
+        self.wait_for(OFF, timeout=timeout)
+        self.valves_off()
+
+    def test(self, codes):
+        """Turn off any previous combination, then send signals."""
+        self.valves_off()
+        self.valves_on(codes)
+
+    def auto_punch(self, codes):
+        """Timerdriven ribbon perforator.
+
+        Turn on the valves, wait the "punching_on_time",
+        then turn off the valves and wait for them to go down
+        ("punching_off_time")."""
+        punching_codes = cv.add_missing_o15(codes)
+        self.valves_on(punching_codes)
+        time.sleep(self.config['punching_on_time'])
+        self.valves_off()
+        time.sleep(self.config['punching_off_time'])
+
+    def manual_punch(self, codes):
+        """Semi-automatic ribbon perforator.
+
+        Turn on the valves, wait the "punching_on_time",
+        turn off the valves and yield control back.
+        The client will advance to the next combination."""
+        punching_codes = cv.add_missing_o15(codes)
+        self.valves_on(punching_codes)
+        time.sleep(self.config['punching_on_time'])
+        self.valves_off()
 
 
 if __name__ == '__main__':
