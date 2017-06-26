@@ -237,13 +237,16 @@ class Interface:
                      supported_row16_modes=config['supported_row16_modes'])
         self.modes = modes
         # initialize the interface with empty state
-        self.state = dict(signals=[], wedge_0005=15, wedge_0075=15,
+        self.state = dict(wedge_0005=15, wedge_0075=15,
                           working=False, water=False, air=False,
                           motor=False, pump=False, sensor=False)
         # GPIO definitions (after setup, these will be actual GPIO numbers)
         self.gpios = dict()
+        # store the current signals
+        self.signals = []
+        # output driver (will be initialized in hardware_setup)
         self.output = None
-        # count photocell ON events for rpm meter
+        # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
         # configure the hardware
         self.hardware_setup(config)
@@ -397,7 +400,7 @@ class Interface:
                 return
             self.pump_control(OFF)
             self.valve_control(OFF)
-            self.state['signals'] = []
+            self.signals = []
             if self.modes['current_operation_mode'] == 'casting':
                 self.motor_control(OFF)
                 self.water_control(OFF)
@@ -434,10 +437,9 @@ class Interface:
         """Check if the pump is working or not"""
         def found(code):
             """check if code was found in a combination"""
-            return set(code).issubset(signals)
+            return set(code).issubset(self.signals)
 
         # cache this to avoid double dictionary lookup for each check
-        signals = self.state['signals']
         if found(['0075']) or found('NK'):
             return True
         elif found(['0005']) or found('NJ'):
@@ -458,14 +460,12 @@ class Interface:
         """Check the wedge positions and return them."""
         def found(code):
             """check if code was found in a combination"""
-            return set(code).issubset(signals)
-
-        signals = self.state['signals']
+            return set(code).issubset(self.signals)
 
         # check 0075: find the earliest row number or default to 15
         if found(['0075']) or found('NK'):
             for pos in range(1, 15):
-                if str(pos) in signals:
+                if str(pos) in self.signals:
                     pos_0075 = pos
                     break
             else:
@@ -477,7 +477,7 @@ class Interface:
         # check 0005: find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
             for pos in range(1, 15):
-                if str(pos) in signals:
+                if str(pos) in self.signals:
                     pos_0005 = pos
                     break
             else:
@@ -494,12 +494,12 @@ class Interface:
         Accepts signals (turn on), False (turn off) or None (get the status)"""
         if state:
             self.output.valves_on(state)
-            self.state['signals'] = cv.ordered_signals(state)
+            self.signals = cv.ordered_signals(state)
         elif state is None:
             pass
         else:
             self.output.valves_off()
-        return self.state['signals']
+        return self.signals
 
     def motor_control(self, state=None):
         """Motor control:
@@ -637,7 +637,6 @@ class Interface:
         control_machine(signals)
         self.state.update(pump=self.check_pump())
         self.state.update(self.check_wedge_positions())
-        return signals
 
     def cast(self, codes, timeout=None):
         """Monotype composition caster.

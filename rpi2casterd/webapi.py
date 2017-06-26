@@ -135,18 +135,15 @@ def mode_control(interface):
 
 @APP.route('/interfaces/<prefix>/signals', methods=(GET, POST, PUT))
 @handle_request
-def send_signals(interface):
+def signals(interface):
     """Sends the signals to the machine"""
     if request.method in (POST, PUT):
         request_data = request.get_json() or {}
-        signals = request_data.get('signals') or []
+        raw_codes = request_data.get('signals') or []
         timeout = request_data.get('timeout')
-        codes = parse_signals(signals)
+        codes = parse_signals(raw_codes)
         interface.send_signals(codes, timeout)
-        return interface.state
-    else:
-        signals = interface.state['signals']
-        return dict(signals=signals)
+    return dict(signals=interface.signals)
 
 
 @APP.route('/interfaces/<prefix>/machine')
@@ -215,5 +212,5 @@ def air_control(interface, state):
 @pass_state
 def pump_control(interface, state):
     """Get a current pump working state."""
-    outcome = interface.pump_control()
+    outcome = interface.pump_control(state)
     return dict(state=outcome)
