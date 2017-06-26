@@ -27,7 +27,8 @@ DEFAULTS = dict(listen_address='0.0.0.0:23017', output_driver='smbus',
                 pump_stop_timeout='120',
                 punching_on_time='0.2', punching_off_time='0.3',
                 debounce_milliseconds='25',
-                led_gpio='18', sensor_gpio='17', error_led_gpio='26',
+                ready_led_gpio='18', sensor_gpio='17',
+                working_led_gpio='25', error_led_gpio='26',
                 air_gpio='19', water_gpio='13', emergency_stop_gpio='22',
                 motor_start_gpio='5', motor_stop_gpio='6',
                 i2c_bus='1', mcp0_address='0x20', mcp1_address='0x21',
@@ -56,6 +57,11 @@ def turn_on(gpio):
 def turn_off(gpio):
     """Turn off a specified GPIO output"""
     GPIO.output(gpio, OFF)
+
+
+def get_state(gpio):
+    """Get the state of a GPIO input or output"""
+    return GPIO.input(gpio)
 
 
 def blink(gpio=None, seconds=0.5, times=3):
@@ -139,7 +145,7 @@ def daemon_setup():
         print('Shutdown button pressed. Hold down for 2s to shut down...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not GPIO.input(shutdown_gpio):
+        if not get_state(shutdown_gpio):
             print('Shutting down...')
             blink('ready')
             cmd = config.get('shutdown_command')
@@ -150,7 +156,7 @@ def daemon_setup():
         print('Reboot button pressed. Hold down for 2s to reboot...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not GPIO.input(reboot_gpio):
+        if not get_state(reboot_gpio):
             print('Rebooting...')
             blink('ready')
             cmd = config.get('reboot_command')
@@ -162,9 +168,9 @@ def daemon_setup():
 
     config = CFG.defaults()
     # set the LED up
-    led_gpio = cv.get('led_gpio', config, int)
-    GPIO.setup(led_gpio, GPIO.OUT)
-    LEDS['ready'] = led_gpio
+    ready_led_gpio = cv.get('ready_led_gpio', config, int)
+    GPIO.setup(ready_led_gpio, GPIO.OUT)
+    LEDS['ready'] = ready_led_gpio
 
     # set the buttons up
     shutdown_gpio = cv.get('shutdown_gpio', config, int)
@@ -222,7 +228,8 @@ def main():
 class Interface:
     """Hardware control interface"""
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
-                            error_led=GPIO.OUT, air=GPIO.OUT, water=GPIO.OUT,
+                            error_led=GPIO.OUT, working_led=GPIO.OUT,
+                            air=GPIO.OUT, water=GPIO.OUT,
                             motor_stop=GPIO.OUT, motor_start=GPIO.OUT)
 
     def __init__(self, config_dict):
@@ -264,7 +271,7 @@ class Interface:
 
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
-            sensor_state = GPIO.input(sensor_gpio)
+            sensor_state = get_state(sensor_gpio)
             self.state['sensor'] = bool(sensor_state)
             if sensor_state:
                 self.meter_events.append(time.time())
@@ -391,6 +398,7 @@ class Interface:
                 self.motor_control(ON)
                 self.check_rotation()
             # properly initialized => mark it as working
+            turn_on(self.gpios['working_led'])
             self.state['working'] = True
 
         def stop():
@@ -405,6 +413,7 @@ class Interface:
                 self.motor_control(OFF)
                 self.water_control(OFF)
             self.air_control(OFF)
+            turn_off(self.gpios['working_led'])
             # release the interface so others can claim it
             self.state['working'] = False
 
@@ -574,7 +583,11 @@ class Interface:
                 # that means the pump is not working, so why stop it?
                 return
 
-            # turn on the emergency LED
+            # turn the emergency LED on, working LED off if needed
+            working_led = self.gpios['working_led']
+            working_led_state = get_state(working_led)
+            if working_led_state:
+                turn_off(self.gpios['working_led'])
             turn_on(self.gpios['error_led'])
             pump_stop_code = ['N', 'J', 'S', '0005']
 
@@ -589,8 +602,10 @@ class Interface:
             while self.state['pump']:
                 self.send_signals(pump_stop_code, timeout=timeout)
 
-            # finished; LED off
+            # finished; emergency LED off, working LED on if needed
             turn_off(self.gpios['error_led'])
+            if working_led_state:
+                turn_on(working_led)
 
         if state is None:
             pass

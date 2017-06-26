@@ -80,6 +80,7 @@ def parse_configuration(source):
         # interface settings: control GPIOs
         config['sensor_gpio'] = get('sensor_gpio', source, int)
         config['error_led_gpio'] = get('error_led_gpio', source, int)
+        config['working_led_gpio'] = get('working_led_gpio', source, int)
         config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, int)
         config['motor_start_gpio'] = get('motor_start_gpio', source, int)
         config['motor_stop_gpio'] = get('motor_stop_gpio', source, int)
