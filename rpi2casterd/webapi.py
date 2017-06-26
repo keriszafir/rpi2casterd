@@ -10,7 +10,7 @@ from rpi2casterd import exceptions as exc
 from rpi2casterd.converters import parse_signals
 
 # method names for convenience
-GET, PUT, POST = 'GET', 'PUT', 'POST'
+ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 
 APP = Flask('rpi2caster')
 INTERFACES = {}
@@ -57,7 +57,11 @@ def pass_state(routine):
         if request.method in (POST, PUT):
             state = request.get_json().get('state')
             return routine(interface, state, *args, **kwargs)
+        elif request.method == DELETE:
+            # turn off
+            return routine(interface, False, *args, **kwargs)
         else:
+            # get state
             return routine(interface, None, *args, **kwargs)
     return wrapper
 
@@ -122,7 +126,7 @@ def get_wedge_positions(interface):
     return interface.check_wedge_positions()
 
 
-@APP.route('/interfaces/<prefix>/modes', methods=(GET, POST, PUT))
+@APP.route('/interfaces/<prefix>/modes', methods=ALL_METHODS)
 @handle_request
 def mode_control(interface):
     """Get or set the interface's operation and row 16 addressing modes.
@@ -137,7 +141,7 @@ def mode_control(interface):
         return interface.mode_control()
 
 
-@APP.route('/interfaces/<prefix>/signals', methods=(GET, POST, PUT))
+@APP.route('/interfaces/<prefix>/signals', methods=ALL_METHODS)
 @handle_request
 def signals(interface):
     """Sends the signals to the machine"""
@@ -150,7 +154,7 @@ def signals(interface):
     return dict(signals=interface.signals)
 
 
-@APP.route('/interfaces/<prefix>/machine')
+@APP.route('/interfaces/<prefix>/machine', methods=ALL_METHODS)
 @handle_request
 @pass_state
 def machine_control(interface, state):
@@ -162,7 +166,7 @@ def machine_control(interface, state):
     return dict(running=outcome)
 
 
-@APP.route('/interface/<prefix>/valves', methods=(GET, POST, PUT))
+@APP.route('/interface/<prefix>/valves', methods=ALL_METHODS)
 @handle_request
 @pass_state
 def valve_control(interface, state):
@@ -175,7 +179,7 @@ def valve_control(interface, state):
     return dict(signals=outcome)
 
 
-@APP.route('/interfaces/<prefix>/water', methods=(GET, POST, PUT))
+@APP.route('/interfaces/<prefix>/water', methods=ALL_METHODS)
 @handle_request
 @pass_state
 def water_control(interface, state):
@@ -187,7 +191,7 @@ def water_control(interface, state):
     return dict(state=outcome)
 
 
-@APP.route('/interfaces/<prefix>/motor', methods=(GET, POST, PUT))
+@APP.route('/interfaces/<prefix>/motor', methods=ALL_METHODS)
 @handle_request
 @pass_state
 def motor_control(interface, state):
@@ -199,7 +203,7 @@ def motor_control(interface, state):
     return dict(state=outcome)
 
 
-@APP.route('/interfaces/<prefix>/air', methods=(GET, POST, PUT))
+@APP.route('/interfaces/<prefix>/air', methods=ALL_METHODS)
 @handle_request
 @pass_state
 def air_control(interface, state):
@@ -211,7 +215,7 @@ def air_control(interface, state):
     return dict(state=outcome)
 
 
-@APP.route('/interfaces/<prefix>/pump', methods=(GET, POST, PUT))
+@APP.route('/interfaces/<prefix>/pump', methods=ALL_METHODS)
 @handle_request
 @pass_state
 def pump_control(interface, state):
