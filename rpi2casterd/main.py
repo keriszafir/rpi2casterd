@@ -7,6 +7,7 @@ It communicates with client(s) via a JSON API and controls the machine
 using selectable backend libraries for greater configurability.
 """
 from collections import deque
+from contextlib import suppress
 from functools import partial, wraps
 import configparser
 import signal
@@ -97,22 +98,19 @@ def handle_machine_stop(routine):
     @wraps(routine)
     def wrapper(interface, *args, **kwargs):
         """wraps the routine"""
+        def check_emergency_stop():
+            """check if the emergency stop button registered any events"""
+            if GPIO.event_detected(interface.gpios['emergency_stop']):
+                raise exc.MachineStopped
+
         try:
-            return routine(interface, *args, **kwargs)
-        except exc.MachineStopped:
+            # unfortunately we cannot abort the routine
+            check_emergency_stop()
+            retval = routine(interface, *args, **kwargs)
+            check_emergency_stop()
+            return retval
+        except (exc.MachineStopped, KeyboardInterrupt):
             interface.machine_control(OFF)
-            raise
-    return wrapper
-
-
-def handle_keyboard_interrupt(routine):
-    """Reraise KeyboardInterrupt as MachineStopped"""
-    @wraps(routine)
-    def wrapper(*args, **kwargs):
-        """wraps the routine"""
-        try:
-            return routine(*args, **kwargs)
-        except KeyboardInterrupt:
             raise exc.MachineStopped
     return wrapper
 
@@ -254,10 +252,6 @@ class Interface:
         """Configure the inputs and outputs.
         Raise ConfigurationError if output name is not recognized,
         or modules supporting the hardware backends cannot be imported."""
-        def emergency_stop(*_):
-            """Raises an exception to stop the machine"""
-            raise exc.MachineStopped
-
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
             sensor_state = get_state(sensor_gpio)
@@ -273,16 +267,10 @@ class Interface:
             GPIO.setup(gpio_number, direction)
             self.gpios[gpio_name] = gpio_number
 
-        try:
-            # register a callback on emergency stop event
+        with suppress(RuntimeError):
+            # register an event detection on emergency stop event
             GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.FALLING,
-                                  callback=emergency_stop,
                                   bouncetime=config['debounce_milliseconds'])
-        except RuntimeError:
-            # event already registered
-            GPIO.add_event_callback(self.gpios['emergency_stop'],
-                                    emergency_stop)
-
         try:
             # register a callback to update the RPM meter
             GPIO.add_event_detect(self.gpios['sensor'], GPIO.BOTH,
@@ -308,7 +296,7 @@ class Interface:
             raise exc.HWConfigError('Module not installed for {}'
                                     .format(output_name))
 
-    @handle_keyboard_interrupt
+    @handle_machine_stop
     def wait_for_sensor(self, new_state, timeout=None):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
@@ -362,8 +350,6 @@ class Interface:
         self.modes.update(new_modes)
         return self.modes
 
-    @handle_machine_stop
-    @handle_keyboard_interrupt
     def machine_control(self, state=None):
         """Machine and interface control.
         If no state or state is None, return the current working state.
@@ -489,6 +475,7 @@ class Interface:
         # we know them now
         return dict(wedge_0075=pos_0075, wedge_0005=pos_0005)
 
+    @handle_machine_stop
     def valve_control(self, state):
         """Turn valves on or off, check valve status.
         Accepts signals (turn on), False (turn off) or None (get the status)"""
@@ -501,6 +488,7 @@ class Interface:
             self.output.valves_off()
         return self.signals
 
+    @handle_machine_stop
     def motor_control(self, state=None):
         """Motor control:
             no state or None = get the motor state,
@@ -523,6 +511,7 @@ class Interface:
             self.state['motor'] = False
             return False
 
+    @handle_machine_stop
     def air_control(self, state=None):
         """Air supply control: master compressed air solenoid valve.
             no state or None = get the air state,
@@ -538,6 +527,7 @@ class Interface:
             self.state['air'] = False
             return False
 
+    @handle_machine_stop
     def water_control(self, state=None):
         """Cooling water control:
             no state or None = get the water valve state,
@@ -606,8 +596,6 @@ class Interface:
             stop()
         return self.state['pump']
 
-    @handle_machine_stop
-    @handle_keyboard_interrupt
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         Based on mode:
@@ -663,7 +651,7 @@ class Interface:
         self.valve_control(codes)
 
     def auto_punch(self, codes):
-        """Timerdriven ribbon perforator.
+        """Timer-driven ribbon perforator.
 
         Turn on the valves, wait the "punching_on_time",
         then turn off the valves and wait for them to go down

@@ -25,15 +25,19 @@ The program uses ``Flask`` to provide a rudimentary JSON API for caster control.
 It accepts POST requests to start and stop the machine, turn the valves on and off,
 change the operation and row 16 addressing modes and send specified signals to the caster or perforator.
 GET requests are used for obtaining the interface's state current, default and supported modes,
-configuration, water/air/motor/pump state and current justification wedge positions.
+configuration, water/air/motor/pump/machine state, rotation speed and current justification wedge positions.
 
 Initializing
 ------------
 
 When starting to work with the interface, change its mode of operation or row 16 addressing.
-If a new mode is unsupported by the interface's configuration (for example, the device is meant
-for being installed on a caster without any row 16 attachments), the ``modes`` request will get an
-error message, stating that a mode we want to use is not supported.
+
+If a new operation or row 16 addressing mode is unsupported by the interface's configuration
+(for example, the device is meant for being installed on a caster without any row 16 attachments),
+the ``modes`` request will get an error message, stating that a mode we want to use is not supported.
+
+The ``casting`` operation mode limits the choice of row 16 addressing modes to the supported modes only,
+whereas the ``punching``, ``manual punching`` or ``testing`` modes can use all row 16 addressing modes.
 
 Starting
 --------
@@ -43,26 +47,48 @@ The interface needs to be started up in order to work. The startup procedure ens
 1. the interface has not been claimed by any other client,
 2. air and (for casting only) water and motor is turned on, if the hardware supports this,
 3. (for casting) the machine is actually turning,
-4. the interface will be claimed until released by the ``stop`` method.
-
-Starting is done explicitly by a GET request to ``/start``, or implicitly
-by trying to send signals to the interface if it's not started yet.
+4. an "interface in use" LED (green) is turned on, if hardware supports this,
+5. the interface will be claimed until released by the ``stop`` method.
 
 Stopping
 --------
 
 Stopping the interface ensures that:
 
-1. air and (for casting) water and motor is turned off,
-2. if the pump is working, it is stopped,
-3. the interface is released for the future clients to claim.
+1. if the pump is working, it is stopped (see the pump control section),
+2. air and (for casting) water and motor is turned off,
+3. the "interface in use" LED is turned off,
+4. the interface is released for the future clients to claim.
 
-Stopping is done by a GET request to ``/stop``.
-In case of casting, if the machine stops turning, the stop procedure is done automatically.
-Also, if the controller has an emergency stop button, pressing it will stop the machine immediately.
+Stopping is done by a request to ``/machine``, or a ``MachineStopped`` exception occurring in the program.
+This happens if the machine has been waiting for the signal from the cycle sensor for too long, or was stopped
+with an emergency stop button (for those control computers which support it).
+
+Pump control
+------------
+
+The ``/pump`` endpoint gets or sets the status of the Monotype caster's pump.
+
+During the pump switch-off procedure, an "alarm" LED (red) is lit to prompt the operator to turh the
+machine's main shaft a few times. The interface will then send a ``NJS+0005+X`` signals combination, where X is the
+current 0005 justification wedge's position. This way, stopping the pump does not reset the wedge position.
+
+The pump switch-on procedure sends the ``NKS+0075+Y`` combination, where Y is the current 0075 justification
+wedge's position.
+
+Motor control
+-------------
+
+The ``/motor`` endpoint gets the status 
+
+
+Sending signals
+---------------
+
+The most important part of the controller.
 
 Operation modes
----------------
+_______________
 
 The interface / driver can operate in different modes, denoted by the ``mode`` parameter
 in the ``modes`` POST request's JSON payload. Depending on the mode, the behavior and signals sent vary.
