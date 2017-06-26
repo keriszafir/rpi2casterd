@@ -118,20 +118,6 @@ def get_wedge_positions(interface):
     return interface.check_wedge_positions()
 
 
-@APP.route('/interfaces/<prefix>/start')
-@handle_request
-def start_machine(interface):
-    """Starts the machine"""
-    return interface.start()
-
-
-@APP.route('/interfaces/<prefix>/stop')
-@handle_request
-def stop_machine(interface):
-    """Stops the machine"""
-    return interface.stop()
-
-
 @APP.route('/interfaces/<prefix>/modes', methods=(GET, POST, PUT))
 @handle_request
 def mode_control(interface):
@@ -154,12 +140,25 @@ def send_signals(interface):
     if request.method in (POST, PUT):
         request_data = request.get_json() or {}
         signals = request_data.get('signals') or []
+        timeout = request_data.get('timeout')
         codes = parse_signals(signals)
-        interface.send_signals(codes)
+        interface.send_signals(codes, timeout)
         return interface.state
     else:
         signals = interface.state['signals']
         return dict(signals=signals)
+
+
+@APP.route('/interfaces/<prefix>/machine')
+@handle_request
+@pass_state
+def machine_control(interface, state):
+    """Machine on/off control.
+    GET: checks the machine running status,
+    POST: starts or stops the machine.
+    """
+    outcome = interface.machine_control(state)
+    return dict(running=outcome)
 
 
 @APP.route('/interface/<prefix>/valves', methods=(GET, POST, PUT))
