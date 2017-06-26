@@ -435,7 +435,8 @@ class Interface:
             if not duration or duration > sensor_timeout:
                 # single event or waited too long
                 return 0
-            per_second = len(events) / duration
+            # 3 timestamps = 2 rotations
+            per_second = (len(events) - 1) / duration
             rpm = round(per_second * 60, 2)
             return rpm
         except IndexError:
