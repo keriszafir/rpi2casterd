@@ -81,10 +81,14 @@ def interface_page(prefix):
     return '\n'.join(['config: {}'.format(url('get_config')),
                       'status: {}'.format(url('get_status')),
                       'wedges: {}'.format(url('get_wedge_positions')),
-                      'valves off: {}'.format(url('valves_off')),
-                      'water: {}'.format(url('water_control')),
-                      'air: {}'.format(url('air_control')),
-                      'motor: {}'.format(url('motor_control'))])
+                      'signals: {}'.format(url('signals')),
+                      'mode control: {}'.format(url('mode_control')),
+                      'machine control: {}'.format(url('machine_control')),
+                      'pump control: {}'.format(url('pump_control')),
+                      'valve control: {}'.format(url('valve_control')),
+                      'water control: {}'.format(url('water_control')),
+                      'air control: {}'.format(url('air_control')),
+                      'motor control: {}'.format(url('motor_control'))])
 
 
 @APP.route('/interfaces/<prefix>/config')
