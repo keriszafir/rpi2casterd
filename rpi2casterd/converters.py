@@ -43,6 +43,17 @@ def command(input_string):
     return [x.strip() for x in chunks]
 
 
+def address_and_port(input_string):
+    """Get an IP or DNS address and a port"""
+    try:
+        address, _port = input_string.split(':')
+        port = int(_port)
+    except ValueError:
+        address = input_string
+        port = 23017
+    return address, port
+
+
 def get(parameter, source, convert):
     """Gets a value from a specified source for a given parameter,
     converts it to a desired data type"""

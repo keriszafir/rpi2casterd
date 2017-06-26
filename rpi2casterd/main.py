@@ -117,27 +117,6 @@ def handle_keyboard_interrupt(routine):
     return wrapper
 
 
-def handle_exceptions(routine):
-    """Run a routine with exception handling"""
-    @wraps(routine)
-    def wrapper(*args, **kwargs):
-        """wraps the routine"""
-        try:
-            return routine(*args, **kwargs)
-
-        except (OSError, PermissionError, RuntimeError) as exception:
-            print('ERROR: You must run this program as root!')
-            print(str(exception))
-
-        except KeyboardInterrupt:
-            print('System exit.')
-
-        finally:
-            # make sure the GPIOs are de-configured properly
-            teardown()
-    return wrapper
-
-
 def daemon_setup():
     """Configure the "ready" LED and shutdown/reboot buttons"""
     def shutdown(*_):
@@ -208,21 +187,31 @@ def interface_setup():
         INTERFACES[name.lower().strip()] = interface
 
 
-@handle_exceptions
 def main():
     """Starts the application"""
-    daemon_setup()
-    interface_setup()
     try:
-        address, _port = CFG.defaults().get('listen_address').split(':')
-        port = int(_port)
-    except ValueError:
-        address = CFG.defaults().get('listen_address')
-        port = 23017
-    # all configured - it's ready to work
-    ready_led_gpio = LEDS.get('ready')
-    turn_on(ready_led_gpio)
-    APP.run(address, port)
+        # get the listen address and port
+        config = CFG.defaults()
+        address, port = cv.get('listen_address', config, cv.address_and_port)
+        # initialize hardware
+        daemon_setup()
+        interface_setup()
+        # all configured - it's ready to work
+        ready_led_gpio = LEDS.get('ready')
+        turn_on(ready_led_gpio)
+        # start the web application
+        APP.run(address, port)
+
+    except (OSError, PermissionError, RuntimeError) as exception:
+        print('ERROR: You must run this program as root!')
+        print(str(exception))
+
+    except KeyboardInterrupt:
+        print('System exit.')
+
+    finally:
+        # make sure the GPIOs are de-configured properly
+        teardown()
 
 
 class Interface:
@@ -374,6 +363,7 @@ class Interface:
         return self.modes
 
     @handle_machine_stop
+    @handle_keyboard_interrupt
     def machine_control(self, state=None):
         """Machine and interface control.
         If no state or state is None, return the current working state.
@@ -617,6 +607,7 @@ class Interface:
         return self.state['pump']
 
     @handle_machine_stop
+    @handle_keyboard_interrupt
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         Based on mode:
