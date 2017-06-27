@@ -21,9 +21,11 @@ def success(**kwargs):
     return jsonify(OrderedDict(success=True, **kwargs))
 
 
-def failure(**kwargs):
+def failure(exception, **kwargs):
     """Return an error JSON dict"""
-    return jsonify(OrderedDict(success=False, **kwargs))
+    return jsonify(OrderedDict(error_name=exception.name,
+                               error_code=exception.code,
+                               success=False, **kwargs))
 
 
 def handle_request(routine):
@@ -41,11 +43,10 @@ def handle_request(routine):
         except KeyError:
             abort(404)
         except (exc.InterfaceNotStarted, exc.InterfaceBusy,
-                exc.MachineStopped) as err:
-            return failure(error=err.name, error_code=err.code)
-        except (exc.UnsupportedMode, exc.UnsupportedRow16Mode) as err:
-            return failure(error=err.name, error_code=err.code,
-                           offending_value=str(err))
+                exc.MachineStopped) as error:
+            return failure(error)
+        except (exc.UnsupportedMode, exc.UnsupportedRow16Mode) as error:
+            return failure(error, offending_value=str(error))
     return wrapper
 
 
