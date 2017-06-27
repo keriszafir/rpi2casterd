@@ -582,6 +582,7 @@ class Interface:
             # try as long as necessary
             while self.state['pump']:
                 self.send_signals(pump_stop_code, timeout=timeout)
+                self.send_signals(pump_stop_code, timeout=timeout)
 
             # finished; emergency LED off, working LED on if needed
             turn_off(self.gpios['error_led'])
