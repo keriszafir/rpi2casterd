@@ -50,14 +50,14 @@ def handle_request(routine):
     return wrapper
 
 
-def pass_state(routine):
-    """Get the state from request and pass it to the decorated function"""
+def pass_content(routine):
+    """Get the content from request and pass it to the decorated function"""
     @wraps(routine)
     def wrapper(interface, *args, **kwargs):
         """wraps the routine"""
         if request.method in (POST, PUT):
-            state = request.get_json().get('state')
-            return routine(interface, state, *args, **kwargs)
+            content = request.get_json().get('content')
+            return routine(interface, content, *args, **kwargs)
         elif request.method == DELETE:
             # turn off
             return routine(interface, False, *args, **kwargs)
@@ -131,13 +131,16 @@ def get_wedge_positions(interface):
 @handle_request
 def mode_control(interface):
     """Get or set the interface's operation and row 16 addressing modes.
-    GET: gets the modes,
-    POST: sets one or both modes."""
+    GET: gets the modes.
+    PUT/POST: sets one or both modes.
+    DELETE: resets the modes to the default values."""
     if request.method in (POST, PUT):
         request_data = request.get_json()
         row16_mode = request_data.get('row16_mode')
         operation_mode = request_data.get('operation_mode')
         return interface.mode_control(operation_mode, row16_mode)
+    elif request.method == DELETE:
+        return interface.mode_control('reset', 'reset')
     else:
         return interface.mode_control()
 
@@ -145,7 +148,11 @@ def mode_control(interface):
 @APP.route('/interfaces/<prefix>/signals', methods=ALL_METHODS)
 @handle_request
 def signals(interface):
-    """Sends the signals to the machine"""
+    """Sends the signals to the machine.
+    GET: gets the current signals,
+    PUT/POST: sends the signals to the machine;
+        the interface will parse and process them according to the current
+        operation and row 16 addressing mode."""
     if request.method in (POST, PUT):
         request_data = request.get_json() or {}
         raw_codes = request_data.get('signals') or []
@@ -157,69 +164,79 @@ def signals(interface):
 
 @APP.route('/interfaces/<prefix>/machine', methods=ALL_METHODS)
 @handle_request
-@pass_state
-def machine_control(interface, state):
+@pass_content
+def machine_control(interface, content):
     """Machine on/off control.
-    GET: checks the machine running status,
-    POST: starts or stops the machine.
+    GET: checks the machine running status.
+    PUT/POST: starts or stops the machine.
+    DELETE: turns the machine off.
     """
-    outcome = interface.machine_control(state)
+    outcome = interface.machine_control(content)
     return dict(running=outcome)
 
 
 @APP.route('/interface/<prefix>/valves', methods=ALL_METHODS)
 @handle_request
-@pass_state
-def valve_control(interface, state):
+@pass_content
+def valve_control(interface, content):
     """Control the solenoid valves.
-    state: None = get status,
+    GET: get the signals,
+    PUT/POST:
+    content: None = get status,
            False = turn all valves off,
            list of signals = turn specified valves on.
+    DELETE: turn all valves off.
     """
-    outcome = interface.valve_control(state)
+    outcome = interface.valve_control(content)
     return dict(signals=outcome)
 
 
 @APP.route('/interfaces/<prefix>/water', methods=ALL_METHODS)
 @handle_request
-@pass_state
-def water_control(interface, state):
+@pass_content
+def water_control(interface, content):
     """Cooling water control:
-        GET or POST with no data: get status,
-        POST with any value: turn on or off.
+        GET, PUT or POST with no data: get status.
+        PUT/POST with any value: turn on or off.
+        DELETE: turn off.
     """
-    outcome = interface.water_control(state)
+    outcome = interface.water_control(content)
     return dict(state=outcome)
 
 
 @APP.route('/interfaces/<prefix>/motor', methods=ALL_METHODS)
 @handle_request
-@pass_state
-def motor_control(interface, state):
+@pass_content
+def motor_control(interface, content):
     """Motor control:
-        GET or POST with no data: get status,
-        POST with any value: turn on or off.
+        GET, PUT or POST with no data: get status.
+        PUT/POST with any value: turn on or off.
+        DELETE: turn off.
     """
-    outcome = interface.motor_control(state)
+    outcome = interface.motor_control(content)
     return dict(state=outcome)
 
 
 @APP.route('/interfaces/<prefix>/air', methods=ALL_METHODS)
 @handle_request
-@pass_state
-def air_control(interface, state):
+@pass_content
+def air_control(interface, content):
     """Air supply control:
-        GET or POST with no data: get status,
-        POST with any value: turn on or off.
+        GET or PUT/POST with no data: get status,
+        PUT/POST with any value: turn on or off.
+        DELETE: turn off.
     """
-    outcome = interface.air_control(state)
+    outcome = interface.air_control(content)
     return dict(state=outcome)
 
 
 @APP.route('/interfaces/<prefix>/pump', methods=ALL_METHODS)
 @handle_request
-@pass_state
-def pump_control(interface, state):
-    """Get a current pump working state."""
-    outcome = interface.pump_control(state)
+@pass_content
+def pump_control(interface, content):
+    """Pump control:
+        GET or POST with no data: get a current pump working state.
+        PUT/POST with any value: turn on or off.
+        DELETE: turn off."""
+    outcome = interface.pump_control(content)
     return dict(state=outcome)
