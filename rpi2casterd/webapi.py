@@ -145,7 +145,7 @@ def signals(interface):
     return dict(signals=interface.signals)
 
 
-@APP.route('/interfaces/<interface>/<device_name>', methods=ALL_METHODS)
+@APP.route('/interfaces/<interface_id>/<device_name>', methods=ALL_METHODS)
 @handle_request
 def control(interface, device_name):
     """Control or check the status of one of the machine/interface's devices:
