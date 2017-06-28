@@ -442,38 +442,35 @@ class Interface:
             self.wait_for_sensor(ON, timeout=timeout)
             self.wait_for_sensor(OFF, timeout=timeout)
 
-    def check_wedge_positions(self):
+    def update_pump_and_wedges(self):
         """Check the wedge positions and return them."""
         def found(code):
             """check if code was found in a combination"""
             return set(code).issubset(self.signals)
 
+        # first check the pump status
+        if found(['0075']) or found('NK'):
+            self.state['pump'] = True
+        elif found(['0005']) or found('NJ'):
+            self.state['pump'] = False
+
         # check 0075: find the earliest row number or default to 15
         if found(['0075']) or found('NK'):
             for pos in range(1, 15):
                 if str(pos) in self.signals:
-                    pos_0075 = pos
+                    self.state['wedge_0075'] = pos
                     break
             else:
-                pos_0075 = 15
-        else:
-            # no change = current state
-            pos_0075 = self.state['wedge_0075']
+                self.state['wedge_0075'] = 15
 
         # check 0005: find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
             for pos in range(1, 15):
                 if str(pos) in self.signals:
-                    pos_0005 = pos
+                    self.state['wedge_0005'] = pos
                     break
             else:
-                pos_0005 = 15
-        else:
-            # no change = current state
-            pos_0005 = self.state['wedge_0005']
-
-        # we know them now
-        return dict(wedge_0075=pos_0075, wedge_0005=pos_0005)
+                self.state['wedge_0005'] = 15
 
     @handle_machine_stop
     def valves_control(self, state):
@@ -481,6 +478,7 @@ class Interface:
         Accepts signals (turn on), False (turn off) or None (get the status)"""
         if state:
             self.output.valves_on(state)
+            self.update_pump_and_wedges()
             self.signals = cv.ordered_signals(state)
         elif state is None:
             pass
@@ -598,28 +596,61 @@ class Interface:
             stop()
         return self.state['pump']
 
-    def justification_wedge_control(self, wedge_0005=None, wedge_0075=None):
-        """Get or set the current 0075 and 0005 wedge positions.
-        The pump state is not changed in the process:
-            pump previously working will work afterwards, and vice versa.
+    def justification(self, galley_trip=False,
+                      wedge_0005=None, wedge_0075=None):
+        """Single/double justification and 0075/0005 wedge control.
+
+        If galley_trip is desired, put the line to the galley (0075+0005),
+        setting the wedges to their new positions (if specified),
+        or keeping the current positions.
+
+        Otherwise, determine if the wedges change positions
+        and set them if needed.
+
+        This function checks if the pump is currently active, and sends
+        the signals in a sequence preserving the pump status
+        (if the pump was off, it will be off, and vice versa).
         """
+        def send_double(code):
+            """Send a double justification sequence i.e. 0075+0005"""
+            self.send_signals([*'NKJS', '0075', '0005', str(code)])
+
+        def send_0005():
+            """Send a 0005+code"""
+            self.send_signals([*'NJS', '0005', str(new_0005)])
+
+        def send_0075():
+            """Send a 0005+code"""
+            self.send_signals([*'NKS', '0075', str(new_0075)])
+
         pump_working = self.state['pump']
         current_0005 = self.state['wedge_0005']
         current_0075 = self.state['wedge_0075']
         new_0005 = wedge_0005 or current_0005
         new_0075 = wedge_0075 or current_0075
-        if new_0005 == current_0005 and new_0075 == current_0075:
-            # no change
-            return dict(wedge_0075=current_0075, wedge_0005=current_0005)
-        if pump_working:
-            # stop, then start
-            self.send_signals(['N', 'J', 'S', '0005', str(new_0005)])
-            self.send_signals(['N', 'K', 'S', '0075', str(new_0075)])
+
+        if galley_trip:
+            # double justification: line out + set wedges
+            if pump_working:
+                send_double(new_0005)
+                send_0075()
+            else:
+                send_double(new_0075)
+                send_0005()
+
+        elif new_0005 == current_0005 and new_0075 == current_0075:
+            # no need to do anything
+            return
+
         else:
-            # start, then stop
-            self.send_signals(['N', 'K', 'S', '0075', str(new_0075)])
-            self.send_signals(['N', 'J', 'S', '0005', str(new_0005)])
-        return dict(wedge_0075=new_0075, wedge_0005=new_0005)
+            # single justification = no galley trip
+            if pump_working:
+                # if no change, skip
+                send_0005()
+                send_0075()
+            else:
+                send_0075()
+                send_0005()
 
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
@@ -655,8 +686,6 @@ class Interface:
 
         # test/cast/punch the signals
         control_machine(signals)
-        self.state.update(pump=self.check_pump())
-        self.state.update(self.check_wedge_positions())
 
     def cast(self, codes, timeout=None):
         """Monotype composition caster.

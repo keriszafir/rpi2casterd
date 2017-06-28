@@ -111,9 +111,9 @@ def mode_control(interface):
         return interface.mode_control()
 
 
-@APP.route('/interfaces/<interface_id>/wedges', methods=ALL_METHODS)
+@APP.route('/interfaces/<interface_id>/justification', methods=ALL_METHODS)
 @handle_request
-def justification_wedge_control(interface):
+def justification(interface):
     """GET: get the current 0005 and 0075 justifying wedge positions,
     PUT/POST: set new wedge positions (if position is None, keep current),
     DELETE: reset wedges to 15/15."""
@@ -121,11 +121,16 @@ def justification_wedge_control(interface):
         request_data = request.get_json()
         wedge_0075 = request_data.get('wedge_0075')
         wedge_0005 = request_data.get('wedge_0005')
+        galley_trip = request_data.get('galley_trip')
+        interface.justification(wedge_0005, wedge_0075, galley_trip)
     elif request.method == DELETE:
-        wedge_0075 = wedge_0005 = 15
-    else:
-        wedge_0075 = wedge_0005 = None
-    return interface.justification_wedge_control(wedge_0005, wedge_0075)
+        interface.justification(wedge_0005=15, wedge_0075=15,
+                                galley_trip=False)
+
+    # get the current wedge positions
+    current_0075 = interface.status['wedge_0075']
+    current_0005 = interface.status['wedge_0005']
+    return dict(wedge_0005=current_0005, wedge_0075=current_0075)
 
 
 @APP.route('/interfaces/<interface_id>/signals', methods=ALL_METHODS)
