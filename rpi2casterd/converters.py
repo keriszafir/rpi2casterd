@@ -147,6 +147,7 @@ def ordered_signals(source):
         for other in 'JKLI':
             if other in source:
                 arranged.remove('N')
+                arranged.remove(other)
                 arranged.appendleft(other)
                 arranged.appendleft('N')
     return list(arranged)
