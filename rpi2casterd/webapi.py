@@ -174,4 +174,4 @@ def control(interface, device_name):
         result = method(False)
     elif request.method == GET:
         result = method(None)
-    return dict(device_name=result)
+    return {device_name: result}
