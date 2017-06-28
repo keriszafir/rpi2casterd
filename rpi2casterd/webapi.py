@@ -162,15 +162,16 @@ def control(interface, device_name):
     """
     method_name = '{}_control'.format(device_name)
     # look up the method - if it fails, handle_request will raise 404
-    print(method_name)
-    print(dir(interface))
-    print(interface.__dict__)
-    method = interface.__dict__[method_name]
+    try:
+        method = getattr(interface, method_name)
+    except AttributeError:
+        raise KeyError
+    # got the interface's method
     if request.method in (POST, PUT):
         device_state = request.get_json().get(device_name)
-        result = method(interface, device_state)
+        result = method(device_state)
     elif request.method == DELETE:
-        result = method(interface, False)
+        result = method(False)
     elif request.method == GET:
-        result = method(interface)
+        result = method(None)
     return dict(device_name=result)
