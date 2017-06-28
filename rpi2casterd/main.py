@@ -509,6 +509,7 @@ class Interface:
             time.sleep(0.5)
             turn_off(stop_gpio)
             self.state['motor'] = False
+            self.meter_events.clear()
             return False
 
     @handle_machine_stop
