@@ -162,6 +162,7 @@ def control(interface, device_name):
     """
     method_name = '{}_control'.format(device_name)
     # look up the method - if it fails, handle_request will raise 404
+    print(method_name)
     method = interface.__dict__[method_name]
     if request.method in (POST, PUT):
         device_state = request.get_json().get(device_name)
