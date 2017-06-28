@@ -50,23 +50,6 @@ def handle_request(routine):
     return wrapper
 
 
-def pass_content(routine):
-    """Get the content from request and pass it to the decorated function"""
-    @wraps(routine)
-    def wrapper(interface, *args, **kwargs):
-        """wraps the routine"""
-        if request.method in (POST, PUT):
-            content = request.get_json().get('content')
-            return routine(interface, content, *args, **kwargs)
-        elif request.method == DELETE:
-            # turn off
-            return routine(interface, False, *args, **kwargs)
-        else:
-            # get state
-            return routine(interface, None, *args, **kwargs)
-    return wrapper
-
-
 @APP.route('/')
 def index():
     """Main page for rpi2caster interface"""
@@ -162,81 +145,29 @@ def signals(interface):
     return dict(signals=interface.signals)
 
 
-@APP.route('/interfaces/<prefix>/machine', methods=ALL_METHODS)
+@APP.route('/interfaces/<interface>/<device_name>', methods=ALL_METHODS)
 @handle_request
-@pass_content
-def machine_control(interface, content):
-    """Machine on/off control.
-    GET: checks the machine running status.
-    PUT/POST: starts or stops the machine.
-    DELETE: turns the machine off.
+def control(interface, device_name):
+    """Control or check the status of one of the machine/interface's devices:
+        -caster's pump,
+        -caster's motor (using two relays),
+        -compressed air supply,
+        -cooling water supply,
+        -solenoid valves.
+
+    GET checks the device's state.
+    DELETE turns the device off (sends False).
+    POST or PUT requests turn the device on (state=True), off (state=False)
+    or check the device's state (state=None or not specified).
     """
-    outcome = interface.machine_control(content)
-    return dict(running=outcome)
-
-
-@APP.route('/interface/<prefix>/valves', methods=ALL_METHODS)
-@handle_request
-@pass_content
-def valve_control(interface, content):
-    """Control the solenoid valves.
-    GET: get the signals,
-    PUT/POST:
-    content: None = get status,
-           False = turn all valves off,
-           list of signals = turn specified valves on.
-    DELETE: turn all valves off.
-    """
-    outcome = interface.valve_control(content)
-    return dict(signals=outcome)
-
-
-@APP.route('/interfaces/<prefix>/water', methods=ALL_METHODS)
-@handle_request
-@pass_content
-def water_control(interface, content):
-    """Cooling water control:
-        GET, PUT or POST with no data: get status.
-        PUT/POST with any value: turn on or off.
-        DELETE: turn off.
-    """
-    outcome = interface.water_control(content)
-    return dict(state=outcome)
-
-
-@APP.route('/interfaces/<prefix>/motor', methods=ALL_METHODS)
-@handle_request
-@pass_content
-def motor_control(interface, content):
-    """Motor control:
-        GET, PUT or POST with no data: get status.
-        PUT/POST with any value: turn on or off.
-        DELETE: turn off.
-    """
-    outcome = interface.motor_control(content)
-    return dict(state=outcome)
-
-
-@APP.route('/interfaces/<prefix>/air', methods=ALL_METHODS)
-@handle_request
-@pass_content
-def air_control(interface, content):
-    """Air supply control:
-        GET or PUT/POST with no data: get status,
-        PUT/POST with any value: turn on or off.
-        DELETE: turn off.
-    """
-    outcome = interface.air_control(content)
-    return dict(state=outcome)
-
-
-@APP.route('/interfaces/<prefix>/pump', methods=ALL_METHODS)
-@handle_request
-@pass_content
-def pump_control(interface, content):
-    """Pump control:
-        GET or POST with no data: get a current pump working state.
-        PUT/POST with any value: turn on or off.
-        DELETE: turn off."""
-    outcome = interface.pump_control(content)
-    return dict(state=outcome)
+    method_name = '{}_control'.format(device_name)
+    # look up the method - if it fails, handle_request will raise 404
+    method = interface.__dict__[method_name]
+    if request.method in (POST, PUT):
+        device_state = request.get_json().get(device_name)
+        result = method(interface, device_state)
+    elif request.method == DELETE:
+        result = method(interface, False)
+    elif request.method == GET:
+        result = method(interface)
+    return dict(device_name=result)

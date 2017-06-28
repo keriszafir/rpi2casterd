@@ -476,7 +476,7 @@ class Interface:
         return dict(wedge_0075=pos_0075, wedge_0005=pos_0005)
 
     @handle_machine_stop
-    def valve_control(self, state):
+    def valves_control(self, state):
         """Turn valves on or off, check valve status.
         Accepts signals (turn on), False (turn off) or None (get the status)"""
         if state:
