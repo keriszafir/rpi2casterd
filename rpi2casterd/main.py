@@ -597,6 +597,29 @@ class Interface:
             stop()
         return self.state['pump']
 
+    def justification_wedge_control(self, wedge_0005=None, wedge_0075=None):
+        """Get or set the current 0075 and 0005 wedge positions.
+        The pump state is not changed in the process:
+            pump previously working will work afterwards, and vice versa.
+        """
+        pump_working = self.state['pump']
+        current_0005 = self.state['wedge_0005']
+        current_0075 = self.state['wedge_0075']
+        new_0005 = wedge_0005 or current_0005
+        new_0075 = wedge_0075 or current_0075
+        if new_0005 == current_0005 and new_0075 == current_0075:
+            # no change
+            return dict(wedge_0075=current_0075, wedge_0005=current_0005)
+        if pump_working:
+            # stop, then start
+            self.send_signals(['N', 'J', 'S', '0005', str(new_0005)])
+            self.send_signals(['N', 'K', 'S', '0075', str(new_0075)])
+        else:
+            # start, then stop
+            self.send_signals(['N', 'K', 'S', '0075', str(new_0075)])
+            self.send_signals(['N', 'J', 'S', '0005', str(new_0005)])
+        return dict(wedge_0075=new_0075, wedge_0005=new_0005)
+
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         Based on mode:

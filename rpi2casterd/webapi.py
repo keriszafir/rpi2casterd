@@ -65,18 +65,7 @@ def list_interfaces():
 @APP.route('/interfaces/<interface_id>')
 def interface_page(interface_id):
     """Interface's browsable API"""
-    url = partial(url_for, interface_id=interface_id)
-    return '\n'.join(['config: {}'.format(url('get_config')),
-                      'status: {}'.format(url('get_status')),
-                      'wedges: {}'.format(url('get_wedge_positions')),
-                      'signals: {}'.format(url('signals')),
-                      'mode control: {}'.format(url('mode_control')),
-                      'machine control: {}'.format(url('machine_control')),
-                      'pump control: {}'.format(url('pump_control')),
-                      'valve control: {}'.format(url('valve_control')),
-                      'water control: {}'.format(url('water_control')),
-                      'air control: {}'.format(url('air_control')),
-                      'motor control: {}'.format(url('motor_control'))])
+    return 'It works!'
 
 
 @APP.route('/interfaces/<interface_id>/config')
@@ -93,6 +82,7 @@ def get_status(interface):
     retval = dict()
     retval.update(interface.state)
     retval.update(speed='{}rpm'.format(interface.rpm()))
+    retval.update(signals=interface.signals)
     return retval
 
 
@@ -105,9 +95,19 @@ def get_speed(interface):
 
 @APP.route('/interfaces/<interface_id>/wedges')
 @handle_request
-def get_wedge_positions(interface):
-    """Get the current 0005 and 0075 justifying wedge positions."""
-    return interface.check_wedge_positions()
+def justification_wedge_control(interface):
+    """GET: get the current 0005 and 0075 justifying wedge positions,
+    PUT/POST: set new wedge positions (if position is None, keep current),
+    DELETE: reset wedges to 15/15."""
+    if request.method in (PUT, POST):
+        request_data = request.get_json()
+        wedge_0075 = request_data.get('wedge_0075')
+        wedge_0005 = request_data.get('wedge_0005')
+    elif request.method == DELETE:
+        wedge_0075 = wedge_0005 = 15
+    else:
+        wedge_0075 = wedge_0005 = None
+    return interface.justification_wedge_control(wedge_0005, wedge_0075)
 
 
 @APP.route('/interfaces/<interface_id>/modes', methods=ALL_METHODS)
@@ -160,18 +160,19 @@ def control(interface, device_name):
     POST or PUT requests turn the device on (state=True), off (state=False)
     or check the device's state (state=None or not specified).
     """
+    # find a suitable interface method
     method_name = '{}_control'.format(device_name)
-    # look up the method - if it fails, handle_request will raise 404
     try:
-        method = getattr(interface, method_name)
+        routine = getattr(interface, method_name)
     except AttributeError:
-        raise KeyError
-    # got the interface's method
+        # not implemented
+        abort(501)
+
     if request.method in (POST, PUT):
         device_state = request.get_json().get(device_name)
-        result = method(device_state)
+        result = routine(device_state)
     elif request.method == DELETE:
-        result = method(False)
+        result = routine(False)
     elif request.method == GET:
-        result = method(None)
-    return {device_name: result}
+        result = routine(None)
+    return dict(active=result)
