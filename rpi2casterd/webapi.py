@@ -2,8 +2,8 @@
 """Flask web API for rpi2casterd"""
 
 from collections import OrderedDict
-from functools import partial, wraps
-from flask import Flask, abort, jsonify, url_for
+from functools import wraps
+from flask import Flask, abort, jsonify
 from flask.globals import request
 
 from rpi2casterd import exceptions as exc

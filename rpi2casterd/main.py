@@ -383,7 +383,7 @@ class Interface:
                 # don't stop a non-working interface
                 return
             self.pump_control(OFF)
-            self.valve_control(OFF)
+            self.valves_control(OFF)
             self.signals = []
             if self.modes['current_operation_mode'] == 'casting':
                 self.motor_control(OFF)
@@ -665,14 +665,14 @@ class Interface:
         casting_codes = cv.strip_o15(codes)
         timeout = timeout or self.config['sensor_timeout']
         self.wait_for_sensor(ON, timeout=timeout)
-        self.valve_control(casting_codes)
+        self.valves_control(casting_codes)
         self.wait_for_sensor(OFF, timeout=timeout)
-        self.valve_control(OFF)
+        self.valves_control(OFF)
 
     def test(self, codes):
         """Turn off any previous combination, then send signals."""
-        self.valve_control(OFF)
-        self.valve_control(codes)
+        self.valves_control(OFF)
+        self.valves_control(codes)
 
     def auto_punch(self, codes):
         """Timer-driven ribbon perforator.
@@ -681,9 +681,9 @@ class Interface:
         then turn off the valves and wait for them to go down
         ("punching_off_time")."""
         punching_codes = cv.add_missing_o15(codes)
-        self.valve_control(punching_codes)
+        self.valves_control(punching_codes)
         time.sleep(self.config['punching_on_time'])
-        self.valve_control(OFF)
+        self.valves_control(OFF)
         time.sleep(self.config['punching_off_time'])
 
     def manual_punch(self, codes):
@@ -693,9 +693,9 @@ class Interface:
         turn off the valves and yield control back.
         The client will advance to the next combination."""
         punching_codes = cv.add_missing_o15(codes)
-        self.valve_control(punching_codes)
+        self.valves_control(punching_codes)
         time.sleep(self.config['punching_on_time'])
-        self.valve_control(OFF)
+        self.valves_control(OFF)
 
 
 if __name__ == '__main__':
