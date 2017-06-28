@@ -32,10 +32,10 @@ def handle_request(routine):
     """Boilerplate code for the flask API functions,
     used for handling requests to interfaces."""
     @wraps(routine)
-    def wrapper(prefix, *args, **kwargs):
+    def wrapper(interface_id, *args, **kwargs):
         """wraps the routine"""
         try:
-            interface = INTERFACES[prefix]
+            interface = INTERFACES[interface_id]
             # does the function return any json-ready parameters?
             outcome = routine(interface, *args, **kwargs) or dict()
             # if caught no exceptions, all went well => return success
@@ -62,10 +62,10 @@ def list_interfaces():
     return jsonify({i: str(interface) for i, interface in INTERFACES.items()})
 
 
-@APP.route('/interfaces/<prefix>')
-def interface_page(prefix):
+@APP.route('/interfaces/<interface_id>')
+def interface_page(interface_id):
     """Interface's browsable API"""
-    url = partial(url_for, prefix=prefix)
+    url = partial(url_for, interface_id=interface_id)
     return '\n'.join(['config: {}'.format(url('get_config')),
                       'status: {}'.format(url('get_status')),
                       'wedges: {}'.format(url('get_wedge_positions')),
@@ -79,14 +79,14 @@ def interface_page(prefix):
                       'motor control: {}'.format(url('motor_control'))])
 
 
-@APP.route('/interfaces/<prefix>/config')
+@APP.route('/interfaces/<interface_id>/config')
 @handle_request
 def get_config(interface):
     """Get the interface configuration"""
     return interface.config
 
 
-@APP.route('/interfaces/<prefix>/status')
+@APP.route('/interfaces/<interface_id>/status')
 @handle_request
 def get_status(interface):
     """Gets the current interface status"""
@@ -96,21 +96,21 @@ def get_status(interface):
     return retval
 
 
-@APP.route('/interfaces/<prefix>/rpm')
+@APP.route('/interfaces/<interface_id>/rpm')
 @handle_request
 def get_speed(interface):
     """Measure the current RPM"""
     return dict(speed='{}rpm'.format(interface.rpm()))
 
 
-@APP.route('/interfaces/<prefix>/wedges')
+@APP.route('/interfaces/<interface_id>/wedges')
 @handle_request
 def get_wedge_positions(interface):
     """Get the current 0005 and 0075 justifying wedge positions."""
     return interface.check_wedge_positions()
 
 
-@APP.route('/interfaces/<prefix>/modes', methods=ALL_METHODS)
+@APP.route('/interfaces/<interface_id>/modes', methods=ALL_METHODS)
 @handle_request
 def mode_control(interface):
     """Get or set the interface's operation and row 16 addressing modes.
@@ -128,7 +128,7 @@ def mode_control(interface):
         return interface.mode_control()
 
 
-@APP.route('/interfaces/<prefix>/signals', methods=ALL_METHODS)
+@APP.route('/interfaces/<interface_id>/signals', methods=ALL_METHODS)
 @handle_request
 def signals(interface):
     """Sends the signals to the machine.
