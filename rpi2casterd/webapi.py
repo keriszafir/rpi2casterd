@@ -111,7 +111,7 @@ def mode_control(interface):
         return interface.mode_control()
 
 
-@APP.route('/interfaces/<interface_id>/wedges')
+@APP.route('/interfaces/<interface_id>/wedges', methods=ALL_METHODS)
 @handle_request
 def justification_wedge_control(interface):
     """GET: get the current 0005 and 0075 justifying wedge positions,
