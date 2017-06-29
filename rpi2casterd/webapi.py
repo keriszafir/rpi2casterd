@@ -63,34 +63,14 @@ def list_interfaces():
 
 
 @APP.route('/interfaces/<interface_id>')
-def interface_page(interface_id):
+@handle_request
+def interface_page(interface):
     """Interface's browsable API"""
-    return 'It works!'
-
-
-@APP.route('/interfaces/<interface_id>/config')
-@handle_request
-def get_config(interface):
-    """Get the interface configuration"""
-    return interface.config
-
-
-@APP.route('/interfaces/<interface_id>/status')
-@handle_request
-def get_status(interface):
-    """Gets the current interface status"""
-    retval = dict()
-    retval.update(interface.state)
-    retval.update(speed='{}rpm'.format(interface.rpm()))
-    retval.update(signals=interface.signals)
-    return retval
-
-
-@APP.route('/interfaces/<interface_id>/rpm')
-@handle_request
-def get_speed(interface):
-    """Measure the current RPM"""
-    return dict(speed='{}rpm'.format(interface.rpm()))
+    status = dict()
+    status.update(interface.state)
+    status.update(speed='{}rpm'.format(interface.rpm()))
+    status.update(signals=interface.signals)
+    return dict(status=status, config=interface.config)
 
 
 @APP.route('/interfaces/<interface_id>/modes', methods=ALL_METHODS)
