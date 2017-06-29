@@ -23,8 +23,10 @@ def success(**kwargs):
 
 def failure(exception, **kwargs):
     """Return an error JSON dict"""
+    offending_value = str(exception) or None
     return jsonify(OrderedDict(error_name=exception.name,
                                error_code=exception.code,
+                               offending_value=offending_value,
                                success=False, **kwargs))
 
 
@@ -42,11 +44,11 @@ def handle_request(routine):
             return success(**outcome)
         except KeyError:
             abort(404)
-        except (exc.InterfaceNotStarted, exc.InterfaceBusy,
-                exc.MachineStopped) as error:
+        except NotImplementedError:
+            abort(501)
+        except (exc.InterfaceNotStarted, exc.InterfaceBusy, exc.MachineStopped,
+                exc.UnsupportedMode, exc.UnsupportedRow16Mode) as error:
             return failure(error)
-        except (exc.UnsupportedMode, exc.UnsupportedRow16Mode) as error:
-            return failure(error, offending_value=str(error))
     return wrapper
 
 
@@ -65,12 +67,17 @@ def list_interfaces():
 @APP.route('/interfaces/<interface_id>')
 @handle_request
 def interface_page(interface):
-    """Interface's browsable API"""
+    """Get the read-only information about the interface.
+    Return the JSON-encoded dictionary with:
+        name: interface name
+        status: current interface state,
+        settings: static configuration (in /etc/rpi2casterd.conf)
+    """
     status = dict()
     status.update(interface.state)
     status.update(speed='{}rpm'.format(interface.rpm()))
     status.update(signals=interface.signals)
-    return dict(status=status, config=interface.config)
+    return dict(name=str(interface), status=status, settings=interface.config)
 
 
 @APP.route('/interfaces/<interface_id>/modes', methods=ALL_METHODS)
@@ -145,14 +152,14 @@ def control(interface, device_name):
     POST or PUT requests turn the device on (state=True), off (state=False)
     or check the device's state (state=None or not specified).
     """
-    # find a suitable interface method
+    # find a suitable interface method, otherwise it's not implemented
+    # handle_request will reply 501
     method_name = '{}_control'.format(device_name)
     try:
         routine = getattr(interface, method_name)
     except AttributeError:
-        # not implemented
-        abort(501)
-
+        raise NotImplementedError
+    # we're sure that we have a method
     if request.method in (POST, PUT):
         device_state = request.get_json().get(device_name)
         result = routine(device_state)
