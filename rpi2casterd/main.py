@@ -171,6 +171,7 @@ def daemon_setup():
     # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGKILL, signal_handler)
 
 
 def interface_setup():
@@ -201,7 +202,10 @@ def main():
         APP.run(address, port)
 
     except (OSError, PermissionError, RuntimeError) as exception:
-        print('ERROR: You must run this program as root!')
+        print('ERROR: Not enough privileges to do this.')
+        print('You have to belong to the "gpio" and "spidev" user groups.')
+        print('If this occurred during reboot/shutdown, you need to run '
+              'these commands as root (e.g. with sudo).')
         print(str(exception))
 
     except KeyboardInterrupt:
