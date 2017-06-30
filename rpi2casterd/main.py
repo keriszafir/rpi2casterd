@@ -171,7 +171,6 @@ def daemon_setup():
     # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGKILL, signal_handler)
 
 
 def interface_setup():
