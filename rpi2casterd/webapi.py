@@ -80,22 +80,36 @@ def interface_page(interface):
     return dict(name=str(interface), status=status, settings=interface.config)
 
 
-@APP.route('/interfaces/<interface_id>/modes', methods=ALL_METHODS)
+@APP.route('/interfaces/<interface_id>/operation_mode', methods=ALL_METHODS)
 @handle_request
-def mode_control(interface):
-    """Get or set the interface's operation and row 16 addressing modes.
-    GET: gets the modes.
-    PUT/POST: sets one or both modes.
-    DELETE: resets the modes to the default values."""
+def operation_mode(interface):
+    """Get or set the operation mode (None = testing; casting or punching).
+    GET: gets the current setting,
+    POST or PUT: updates the setting,
+    DELETE: resets the setting to its default value.
+    """
     if request.method in (POST, PUT):
         request_data = request.get_json()
-        row16_mode = request_data.get('row16_mode')
-        operation_mode = request_data.get('operation_mode')
-        return interface.mode_control(operation_mode, row16_mode)
+        interface.operation_mode = request_data.get('mode')
     elif request.method == DELETE:
-        return interface.mode_control('reset', 'reset')
-    else:
-        return interface.mode_control()
+        interface.operation_mode = 'reset'
+    return dict(mode=interface.operation_mode)
+
+
+@APP.route('/interfaces/<interface_id>/row16_mode', methods=ALL_METHODS)
+@handle_request
+def row_16_addressing_mode(interface):
+    """Get or set the row16 addressing mode (None = off; HMN, KMN, unit shift).
+    GET: gets the current setting,
+    POST or PUT: updates the setting,
+    DELETE: resets the setting to its default value.
+    """
+    if request.method in (POST, PUT):
+        request_data = request.get_json()
+        interface.row16_mode = request_data.get('mode')
+    elif request.method == DELETE:
+        interface.row16_mode = 'reset'
+    return dict(mode=interface.row16_mode)
 
 
 @APP.route('/interfaces/<interface_id>/justification', methods=ALL_METHODS)

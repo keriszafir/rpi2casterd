@@ -37,8 +37,8 @@ DEFAULTS = dict(listen_address='0.0.0.0:23017', output_driver='smbus',
                 valve2='F,S,E,D,0075,C,B,A',
                 valve3='1,2,3,4,5,6,7,8',
                 valve4='9,10,11,12,13,14,0005,O15',
-                supported_modes='testing, casting, punching, manual punching',
-                supported_row16_modes='off, HMN, KMN, unit shift')
+                supported_modes='casting, punching',
+                supported_row16_modes='HMN, KMN, unit shift')
 CFG = configparser.ConfigParser(defaults=DEFAULTS)
 CFG.read(CONFIGURATION_PATH)
 
@@ -180,7 +180,10 @@ def interface_setup():
         if name.lower() == 'default':
             # don't treat this as an interface
             continue
-        settings = cv.parse_configuration(section)
+        try:
+            settings = cv.parse_configuration(section)
+        except KeyError as exception:
+            raise exc.ConfigurationError(exception)
         interface = Interface(settings)
         INTERFACES[name.lower().strip()] = interface
 
@@ -224,15 +227,6 @@ class Interface:
 
     def __init__(self, config_dict):
         config = self.config = config_dict
-        # what modes can and will this interface work with?
-        # start with default values
-        modes = dict(default_operation_mode=config['default_mode'],
-                     default_row16_mode=config['default_row16_mode'],
-                     current_operation_mode=config['default_mode'],
-                     current_row16_mode=config['default_row16_mode'],
-                     supported_operation_modes=config['supported_modes'],
-                     supported_row16_modes=config['supported_row16_modes'])
-        self.modes = modes
         # initialize the interface with empty state
         self.state = dict(wedge_0005=15, wedge_0075=15,
                           working=False, water=False, air=False,
@@ -294,10 +288,11 @@ class Interface:
                 raise NameError
             self.output = output(config)
         except NameError:
-            raise exc.HWConfigError('Unknown output: {}.'.format(output_name))
+            raise exc.ConfigurationError('Unknown output: {}.'
+                                         .format(output_name))
         except ImportError:
-            raise exc.HWConfigError('Module not installed for {}'
-                                    .format(output_name))
+            raise exc.ConfigurationError('Module not installed for {}'
+                                         .format(output_name))
 
     @handle_machine_stop
     def wait_for_sensor(self, new_state, timeout=None):
@@ -313,45 +308,47 @@ class Interface:
             # wait 10ms to ease the load on the CPU
             time.sleep(0.01)
 
-    def mode_control(self, operation_mode=None, row16_mode=None):
-        """Get or set the interface operation and row 16 addressing modes."""
-        modes = self.modes
-        new_modes = dict()
+    @property
+    def operation_mode(self):
+        """Get the current operation mode"""
+        default_operation_mode = self.config['default_mode']
+        return self.__dict__.get('_operation_mode', default_operation_mode)
 
-        # check if the interface is in casting mode
-        # this will be overriden if mode changes to something different
-        casting_mode = modes['current_operation_mode'] == 'casting'
+    @operation_mode.setter
+    def operation_mode(self, mode):
+        """Set the operation mode to a new value"""
+        if mode == 'reset':
+            default_operation_mode = self.config['default_mode']
+            self.__dict__['_operation_mode'] = default_operation_mode
+        elif mode is None or mode in self.config['supported_modes']:
+            self.__dict__['_operation_mode'] = mode
+        else:
+            raise exc.UnsupportedMode(mode)
 
-        # check and update the operation mode
-        if operation_mode in modes['supported_operation_modes']:
-            # change an operation mode, but don't commit it yet...
-            new_modes['current_operation_mode'] = operation_mode
-            # ...and check if it's going to be casting
-            casting_mode = operation_mode == 'casting'
-        elif operation_mode == 'reset':
-            default_mode = modes['default_operation_mode']
-            new_modes['current_operation_mode'] = default_mode
-        elif operation_mode:
-            raise exc.UnsupportedMode(operation_mode)
+    @property
+    def row16_mode(self):
+        """Get the current row 16 addressing mode"""
+        default_row16_mode = self.config['default_row16_mode']
+        return self.__dict__.get('_row16_mode', default_row16_mode)
 
-        # check and update the row 16 addressing mode
-        # testing and punching can use all modes
-        all_row16_modes = ('off', 'HMN', 'KMN', 'unit shift')
-        if row16_mode in modes['supported_row16_modes']:
-            # casting modes are limited by configuration
-            new_modes['current_row16_mode'] = row16_mode
-        elif not casting_mode and row16_mode in all_row16_modes:
-            # allow any addressing mode for testing and manual/auto punching
-            new_modes['current_row16_mode'] = row16_mode
-        elif row16_mode == 'reset':
-            default_row16_mode = modes['default_row16_mode']
-            new_modes['current_row16_mode'] = default_row16_mode
-        elif row16_mode:
-            raise exc.UnsupportedRow16Mode(row16_mode)
-
-        # no exceptions occurred, everything went OK = set new modes
-        self.modes.update(new_modes)
-        return self.modes
+    @row16_mode.setter
+    def row16_mode(self, mode):
+        """Set the row 16 addressing mode to a new value"""
+        if mode == 'reset':
+            default_row16_mode = self.config['default_row16_mode']
+            self.__dict__['_row16_mode'] = default_row16_mode
+        elif mode is None:
+            # allow to turn it off in any case
+            self.__dict__['_row16_mode'] = mode
+        elif self.operation_mode == 'casting':
+            # allow only supported row 16 addressing modes
+            if mode in self.config['supported_row16_modes']:
+                self.__dict__['_row16_mode'] = mode
+            else:
+                raise exc.UnsupportedRow16Mode(mode)
+        elif mode in ('HMN', 'KMN', 'unit shift'):
+            # operation mode is testing (None) or punching
+            self.__dict__['_row16_mode'] = mode
 
     def machine_control(self, state=None):
         """Machine and interface control.
@@ -371,7 +368,7 @@ class Interface:
             # turn on the compressed air
             self.air_control(ON)
             # make sure the machine is turning before proceeding
-            if self.modes['current_operation_mode'] == 'casting':
+            if self.operation_mode == 'casting':
                 # turn on the cooling water and motor
                 self.water_control(ON)
                 self.motor_control(ON)
@@ -388,7 +385,7 @@ class Interface:
             self.pump_control(OFF)
             self.valves_control(OFF)
             self.signals = []
-            if self.modes['current_operation_mode'] == 'casting':
+            if self.operation_mode == 'casting':
                 self.motor_control(OFF)
                 self.water_control(OFF)
             self.air_control(OFF)
@@ -671,24 +668,20 @@ class Interface:
 
         # based on row 16 addressing mode,
         # decide which signal conversion should be applied
-        row16_mode = self.modes['current_row16_mode']
-        conversion = {'off': cv.strip_16,
+        conversion = {None: cv.strip_16,
                       'HMN': cv.convert_hmn,
                       'KMN': cv.convert_kmn,
-                      'unit shift': cv.convert_unitshift}[row16_mode]
+                      'unit shift': cv.convert_unitshift}[self.row16_mode]
         signals = conversion(signals)
         # if O or 15 is found in signals, convert it to O15
         signals = cv.convert_o15(signals)
 
         # based on operation mode, decide what to do with the signals
-        mode = self.modes['current_operation_mode']
-        control_machine = {'casting': partial(self.cast, timeout=timeout),
-                           'testing': self.test,
-                           'punching': self.auto_punch,
-                           'manual punching': self.manual_punch}[mode]
+        actions = {'casting': partial(self.cast, timeout=timeout),
+                   'punching': self.punch, None: self.test}
 
         # test/cast/punch the signals
-        control_machine(signals)
+        actions[self.operation_mode](signals)
 
     def cast(self, codes, timeout=None):
         """Monotype composition caster.
@@ -704,10 +697,11 @@ class Interface:
 
     def test(self, codes):
         """Turn off any previous combination, then send signals."""
+        testing_codes = cv.convert_o15(codes)
         self.valves_control(OFF)
-        self.valves_control(codes)
+        self.valves_control(testing_codes)
 
-    def auto_punch(self, codes):
+    def punch(self, codes):
         """Timer-driven ribbon perforator.
 
         Turn on the valves, wait the "punching_on_time",
@@ -718,18 +712,6 @@ class Interface:
         time.sleep(self.config['punching_on_time'])
         self.valves_control(OFF)
         time.sleep(self.config['punching_off_time'])
-
-    def manual_punch(self, codes):
-        """Semi-automatic ribbon perforator.
-
-        Turn on the valves, wait the "punching_on_time",
-        turn off the valves and yield control back.
-        The client will advance to the next combination."""
-        punching_codes = cv.add_missing_o15(codes)
-        self.valves_control(punching_codes)
-        time.sleep(self.config['punching_on_time'])
-        self.valves_control(OFF)
-
 
 if __name__ == '__main__':
     main()

@@ -62,61 +62,50 @@ def get(parameter, source, convert):
 
 def parse_configuration(source):
     """Get the interface parameters from a config parser section"""
-    try:
-        config = OrderedDict()
-        # supported operation and row 16 addressing modes
-        modes = get('supported_modes', source, strings)
-        row16_modes = get('supported_row16_modes', source, strings)
-        config['supported_modes'] = modes
-        config['supported_row16_modes'] = row16_modes
-        # operation mode: first mode other than testing
-        # unless this is the only supported mode
-        if len(modes) > 1 and modes[0] == 'testing':
-            config['default_mode'] = modes[1]
-        else:
-            config['default_mode'] = modes[0]
-        # row 16 addressing mode: off by default
-        config['default_row16_mode'] = row16_modes[0]
+    config = OrderedDict()
+    # supported operation and row 16 addressing modes
+    modes = get('supported_modes', source, strings)
+    row16_modes = get('supported_row16_modes', source, strings)
+    config['supported_modes'] = modes
+    config['supported_row16_modes'] = row16_modes
+    config['default_mode'] = modes[0]
+    config['default_row16_mode'] = None
 
-        # determine the output driver
-        config['output_driver'] = get('output_driver', source, lcstring)
+    # determine the output driver
+    config['output_driver'] = get('output_driver', source, lcstring)
 
-        # get timings
-        config['startup_timeout'] = get('startup_timeout', source, float)
-        config['sensor_timeout'] = get('sensor_timeout', source, float)
-        config['pump_stop_timeout'] = get('pump_stop_timeout', source, float)
-        config['punching_on_time'] = get('punching_on_time', source, float)
-        config['punching_off_time'] = get('punching_off_time', source, float)
+    # get timings
+    config['startup_timeout'] = get('startup_timeout', source, float)
+    config['sensor_timeout'] = get('sensor_timeout', source, float)
+    config['pump_stop_timeout'] = get('pump_stop_timeout', source, float)
+    config['punching_on_time'] = get('punching_on_time', source, float)
+    config['punching_off_time'] = get('punching_off_time', source, float)
 
-        # interface settings: control GPIOs
-        config['sensor_gpio'] = get('sensor_gpio', source, int)
-        config['error_led_gpio'] = get('error_led_gpio', source, int)
-        config['working_led_gpio'] = get('working_led_gpio', source, int)
-        config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, int)
-        config['motor_start_gpio'] = get('motor_start_gpio', source, int)
-        config['motor_stop_gpio'] = get('motor_stop_gpio', source, int)
-        config['water_gpio'] = get('water_gpio', source, int)
-        config['air_gpio'] = get('air_gpio', source, int)
+    # interface settings: control GPIOs
+    config['sensor_gpio'] = get('sensor_gpio', source, int)
+    config['error_led_gpio'] = get('error_led_gpio', source, int)
+    config['working_led_gpio'] = get('working_led_gpio', source, int)
+    config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, int)
+    config['motor_start_gpio'] = get('motor_start_gpio', source, int)
+    config['motor_stop_gpio'] = get('motor_stop_gpio', source, int)
+    config['water_gpio'] = get('water_gpio', source, int)
+    config['air_gpio'] = get('air_gpio', source, int)
 
-        # time (in milliseconds) for software debouncing
-        config['debounce_milliseconds'] = get('debounce_milliseconds',
-                                              source, int)
+    # time (in milliseconds) for software debouncing
+    config['debounce_milliseconds'] = get('debounce_milliseconds',
+                                          source, int)
 
-        # interface settings: output
-        config['i2c_bus'] = get('i2c_bus', source, anyint)
-        config['mcp0_address'] = get('mcp0_address', source, anyint)
-        config['mcp1_address'] = get('mcp1_address', source, anyint)
-        config['signal_mappings'] = dict(valve1=get('valve1', source, signals),
-                                         valve2=get('valve2', source, signals),
-                                         valve3=get('valve3', source, signals),
-                                         valve4=get('valve4', source, signals))
+    # interface settings: output
+    config['i2c_bus'] = get('i2c_bus', source, anyint)
+    config['mcp0_address'] = get('mcp0_address', source, anyint)
+    config['mcp1_address'] = get('mcp1_address', source, anyint)
+    config['signal_mappings'] = dict(valve1=get('valve1', source, signals),
+                                     valve2=get('valve2', source, signals),
+                                     valve3=get('valve3', source, signals),
+                                     valve4=get('valve4', source, signals))
 
-        # configuration ready to ship
-        return config
-
-    except KeyError as exc:
-        return dict(error='configuration_error: {}'.format(exc))
-
+    # configuration ready to ship
+    return config
 
 def parse_signals(source):
     """Parse the incoming signals iterable into useful signals"""

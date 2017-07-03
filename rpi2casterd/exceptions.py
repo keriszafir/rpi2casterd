@@ -11,7 +11,7 @@ class MachineStopped(Exception):
 class UnsupportedMode(Exception):
     """The operation mode is not supported by this interface."""
     code = 1
-    name = 'unsupported mode'
+    name = 'unsupported operation mode'
 
 
 class UnsupportedRow16Mode(Exception):
@@ -33,7 +33,7 @@ class InterfaceNotStarted(Exception):
     name = 'interface not initialized'
 
 
-class HWConfigError(Exception):
+class ConfigurationError(Exception):
     """configuration error: wrong name or cannot import module"""
     code = 5
     name = 'hardware configuration error'
