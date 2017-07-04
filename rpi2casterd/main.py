@@ -933,6 +933,9 @@ class Interface:
     def test(self, input_signals):
         """Turn off any previous combination, then send signals.
         """
+        if not self.state['working']:
+            self.machine_control(True)
+
         self.operation_mode = None
         codes = self.prepare_signals(input_signals)
         # change the active combination
@@ -947,7 +950,7 @@ class Interface:
         ("punching_off_time").
         """
         if not self.state['working']:
-            raise exc.InterfaceNotStarted
+            self.machine_control(True)
 
         self.operation_mode = 'punching'
         codes = self.prepare_signals(input_signals)
