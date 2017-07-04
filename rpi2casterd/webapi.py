@@ -7,7 +7,6 @@ from flask import Flask, abort, jsonify
 from flask.globals import request
 
 from rpi2casterd import exceptions as exc
-from rpi2casterd.converters import parse_signals
 
 # method names for convenience
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
@@ -178,10 +177,9 @@ def signals(interface):
         operation and row 16 addressing mode."""
     if request.method in (POST, PUT):
         request_data = request.get_json() or {}
-        raw_codes = request_data.get('signals') or []
+        signals = request_data.get('signals') or []
         timeout = request_data.get('timeout')
-        codes = parse_signals(raw_codes)
-        interface.send_signals(codes, timeout)
+        interface.send_signals(signals, timeout)
     return dict(signals=interface.signals)
 
 
