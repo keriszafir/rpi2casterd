@@ -224,29 +224,3 @@ def strip_16(source):
         sigset.discard('16')
         sigset.add('15')
     return sigset
-
-
-def convert_o15(source):
-    """Change O and 15 to a combined O+15 signal"""
-    source_signals = set(source)
-    for signal in ('O', '15'):
-        if signal in source_signals:
-            source_signals.discard(signal)
-            source_signals.update('O15')
-    return source_signals
-
-
-def strip_o15(source):
-    """For casting, don't use O+15"""
-    source_signals = set(source)
-    source_signals.discard('O15')
-    return source_signals
-
-
-def add_missing_o15(source):
-    """If length of signals is less than 2, add an O+15 so that when punching,
-    the ribbon will be advanced properly."""
-    source_signals = set(source)
-    if len(source_signals) < 2:
-        source_signals.update('O15')
-    return source_signals

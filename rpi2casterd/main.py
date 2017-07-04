@@ -652,9 +652,55 @@ class Interface:
                 send_0075()
                 send_0005()
 
+    def prepare_signals(self, input_signals):
+        """Prepare the incoming signals for casting, testing or punching."""
+        def strip_16(source):
+            """Get rid of the "16" signal and replace it with "15"."""
+            sigset = {str(s).upper() for s in source}
+            if '16' in sigset:
+                sigset.discard('16')
+                sigset.add('15')
+            return sigset
+
+        def convert_o15(source):
+            """Change O and 15 to a combined O+15 signal"""
+            source_signals = set(source)
+            for sig in ('O', '15'):
+                if sig in source_signals:
+                    source_signals.discard(sig)
+                    source_signals.update('O15')
+            return source_signals
+
+        def strip_o15(source):
+            """For casting, don't use O+15"""
+            source_signals = set(source)
+            source_signals.discard('O15')
+            return source_signals
+
+        def add_missing_o15(source):
+            """If length of signals is less than 2, add an O+15 so that when punching,
+            the ribbon will be advanced properly."""
+            source_signals = set(source)
+            if len(source_signals) < 2:
+                source_signals.update('O15')
+            return source_signals
+
+        # based on row 16 addressing mode,
+        # decide which signal conversion should be applied
+        row16_converters = {None: strip_16, 'unit shift': cv.convert_unitshift,
+                            'HMN': cv.convert_hmn, 'KMN': cv.convert_kmn}
+        signals = row16_converters[self.row16_mode](input_signals)
+        # based on the operation mode, strip, convert or add O/15 signals
+        # casting: strip (as it's not used),
+        # punching: add if less than 2 signals,
+        # testing: convert O or 15 to O+15 which will be sent
+        o15_converters = {'casting': strip_o15, 'punching': add_missing_o15,
+                          None: convert_o15}
+        return o15_converters[self.operation_mode](signals)
+
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
-        Based on mode:
+        This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
             punching: valves ON, wait t1, valves OFF, wait t2
             testing: valves OFF, valves ON
@@ -666,16 +712,6 @@ class Interface:
         if not self.state['working']:
             raise exc.InterfaceNotStarted
 
-        # based on row 16 addressing mode,
-        # decide which signal conversion should be applied
-        conversion = {None: cv.strip_16,
-                      'HMN': cv.convert_hmn,
-                      'KMN': cv.convert_kmn,
-                      'unit shift': cv.convert_unitshift}[self.row16_mode]
-        signals = conversion(signals)
-        # if O or 15 is found in signals, convert it to O15
-        signals = cv.convert_o15(signals)
-
         # based on operation mode, decide what to do with the signals
         actions = {'casting': partial(self.cast, timeout=timeout),
                    'punching': self.punch, None: self.test}
@@ -683,32 +719,42 @@ class Interface:
         # test/cast/punch the signals
         actions[self.operation_mode](signals)
 
-    def cast(self, codes, timeout=None):
+    def cast(self, input_signals, timeout=None):
         """Monotype composition caster.
 
         Wait for sensor to go ON, turn on the valves,
-        wait for sensor to go OFF, turn off the valves."""
-        casting_codes = cv.strip_o15(codes)
+        wait for sensor to go OFF, turn off the valves.
+        """
+        self.operation_mode = 'casting'
+        codes = self.prepare_signals(input_signals)
+        # allow the use of a custom timeout
         timeout = timeout or self.config['sensor_timeout']
+        # machine control cycle
         self.wait_for_sensor(ON, timeout=timeout)
-        self.valves_control(casting_codes)
+        self.valves_control(codes)
         self.wait_for_sensor(OFF, timeout=timeout)
         self.valves_control(OFF)
 
-    def test(self, codes):
-        """Turn off any previous combination, then send signals."""
-        testing_codes = cv.convert_o15(codes)
+    def test(self, input_signals):
+        """Turn off any previous combination, then send signals.
+        """
+        self.operation_mode = None
+        codes = self.prepare_signals(input_signals)
+        # change the active combination
         self.valves_control(OFF)
-        self.valves_control(testing_codes)
+        self.valves_control(codes)
 
-    def punch(self, codes):
+    def punch(self, input_signals):
         """Timer-driven ribbon perforator.
 
         Turn on the valves, wait the "punching_on_time",
         then turn off the valves and wait for them to go down
-        ("punching_off_time")."""
-        punching_codes = cv.add_missing_o15(codes)
-        self.valves_control(punching_codes)
+        ("punching_off_time").
+        """
+        self.operation_mode = 'punching'
+        codes = self.prepare_signals(input_signals)
+        # timer-driven operation
+        self.valves_control(codes)
         time.sleep(self.config['punching_on_time'])
         self.valves_control(OFF)
         time.sleep(self.config['punching_off_time'])

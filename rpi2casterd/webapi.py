@@ -96,6 +96,40 @@ def operation_mode(interface):
     return dict(mode=interface.operation_mode)
 
 
+@APP.route('/interfaces/<interface_id>/cast', methods=(POST, PUT))
+@handle_request
+def cast(interface, signals):
+    """Cast the signals with a composition caster.
+    Raise UnsupportedMode if the casting mode is not supported."""
+    request_data = request.get_json()
+    signals = request_data.get('signals')
+    timeout = request_data.get('timeout')
+    interface.cast(signals, timeout)
+    return dict(signals=interface.signals)
+
+
+@APP.route('/interfaces/<interface_id>/punch', methods=(POST, PUT))
+@handle_request
+def punch(interface, signals):
+    """Send the signals to a ribbon perforator.
+    Raise UnsupportedMode if the punching mode is not supported."""
+    request_data = request.get_json()
+    signals = request_data.get('signals')
+    interface.punch(signals)
+    return dict(signals=interface.signals)
+
+
+@APP.route('/interfaces/<interface_id>/test', methods=(POST, PUT))
+@handle_request
+def test(interface, signals):
+    """Test the interface/valves/machine by sending arbitrary signals.
+    This will keep the valves open until called off."""
+    request_data = request.get_json()
+    signals = request_data.get('signals')
+    interface.test(signals)
+    return dict(signals=interface.signals)
+
+
 @APP.route('/interfaces/<interface_id>/row16_mode', methods=ALL_METHODS)
 @handle_request
 def row_16_addressing_mode(interface):
