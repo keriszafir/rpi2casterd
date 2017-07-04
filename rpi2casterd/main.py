@@ -904,10 +904,6 @@ class Interface:
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        # make sure the interface is initialized
-        if not self.state['working']:
-            raise exc.InterfaceNotStarted
-
         # based on operation mode, decide what to do with the signals
         actions = {'casting': partial(self.cast, timeout=timeout),
                    'punching': self.punch, None: self.test}
@@ -921,6 +917,9 @@ class Interface:
         Wait for sensor to go ON, turn on the valves,
         wait for sensor to go OFF, turn off the valves.
         """
+        if not self.state['working']:
+            raise exc.InterfaceNotStarted
+
         self.operation_mode = 'casting'
         codes = self.prepare_signals(input_signals)
         # allow the use of a custom timeout
@@ -947,6 +946,9 @@ class Interface:
         then turn off the valves and wait for them to go down
         ("punching_off_time").
         """
+        if not self.state['working']:
+            raise exc.InterfaceNotStarted
+
         self.operation_mode = 'punching'
         codes = self.prepare_signals(input_signals)
         # timer-driven operation
