@@ -40,7 +40,7 @@ DEFAULTS = dict(listen_address='0.0.0.0:23017', output_driver='smbus',
                 valve2='F,S,E,D,0075,C,B,A',
                 valve3='1,2,3,4,5,6,7,8',
                 valve4='9,10,11,12,13,14,0005,O15',
-                supported_modes='casting, punching',
+                supported_operation_modes='casting, punching',
                 supported_row16_modes='HMN, KMN, unit shift')
 CFG = configparser.ConfigParser(defaults=DEFAULTS)
 CFG.read(CONFIGURATION_PATH)
@@ -124,9 +124,9 @@ def parse_configuration(source):
 
     config = OrderedDict()
     # supported operation and row 16 addressing modes
-    modes = get('supported_modes', source, strings)
+    modes = get('supported_operation_modes', source, strings)
     row16_modes = get('supported_row16_modes', source, strings)
-    config['supported_modes'] = modes
+    config['supported_operation_modes'] = modes
     config['supported_row16_modes'] = row16_modes
     config['default_operation_mode'] = modes[0]
     config['default_row16_mode'] = None
@@ -333,9 +333,13 @@ class Interface:
     def __init__(self, config_dict):
         config = self.config = config_dict
         # initialize the interface with empty state
+        default_operation_mode = config['default_operation_mode']
+        default_row16_mode = config['default_row16_mode']
         self.state = dict(wedge_0005=15, wedge_0075=15,
                           working=False, water=False, air=False,
-                          motor=False, pump=False, sensor=False)
+                          motor=False, pump=False, sensor=False,
+                          current_operation_mode=default_operation_mode,
+                          current_row16_mode=default_row16_mode)
         # GPIO definitions (after setup, these will be actual GPIO numbers)
         self.gpios = dict()
         # store the current signals
@@ -417,16 +421,16 @@ class Interface:
     def operation_mode(self):
         """Get the current operation mode"""
         default_operation_mode = self.config['default_operation_mode']
-        return self.__dict__.get('_operation_mode', default_operation_mode)
+        return self.state.get('current_operation_mode', default_operation_mode)
 
     @operation_mode.setter
     def operation_mode(self, mode):
         """Set the operation mode to a new value"""
         if mode == 'reset':
             default_operation_mode = self.config['default_operation_mode']
-            self.__dict__['_operation_mode'] = default_operation_mode
-        elif mode is None or mode in self.config['supported_modes']:
-            self.__dict__['_operation_mode'] = mode
+            self.state['current_operation_mode'] = default_operation_mode
+        elif mode is None or mode in self.config['supported_operation_modes']:
+            self.state['current_operation_mode'] = mode
         else:
             raise exc.UnsupportedMode(mode)
 
