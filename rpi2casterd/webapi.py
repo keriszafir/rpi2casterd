@@ -99,7 +99,7 @@ def operation_mode(interface):
 
 @APP.route('/interfaces/<interface_id>/cast', methods=(POST, PUT))
 @handle_request
-def cast(interface, signals):
+def cast(interface):
     """Cast the signals with a composition caster.
     Raise UnsupportedMode if the casting mode is not supported."""
     request_data = request.get_json()
@@ -111,7 +111,7 @@ def cast(interface, signals):
 
 @APP.route('/interfaces/<interface_id>/punch', methods=(POST, PUT))
 @handle_request
-def punch(interface, signals):
+def punch(interface):
     """Send the signals to a ribbon perforator.
     Raise UnsupportedMode if the punching mode is not supported."""
     request_data = request.get_json()
@@ -122,7 +122,7 @@ def punch(interface, signals):
 
 @APP.route('/interfaces/<interface_id>/test', methods=(POST, PUT))
 @handle_request
-def test(interface, signals):
+def test(interface):
     """Test the interface/valves/machine by sending arbitrary signals.
     This will keep the valves open until called off."""
     request_data = request.get_json()
