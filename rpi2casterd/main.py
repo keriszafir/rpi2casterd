@@ -128,7 +128,7 @@ def parse_configuration(source):
     row16_modes = get('supported_row16_modes', source, strings)
     config['supported_modes'] = modes
     config['supported_row16_modes'] = row16_modes
-    config['default_mode'] = modes[0]
+    config['default_operation_mode'] = modes[0]
     config['default_row16_mode'] = None
 
     # determine the output driver
@@ -416,14 +416,14 @@ class Interface:
     @property
     def operation_mode(self):
         """Get the current operation mode"""
-        default_operation_mode = self.config['default_mode']
+        default_operation_mode = self.config['default_operation_mode']
         return self.__dict__.get('_operation_mode', default_operation_mode)
 
     @operation_mode.setter
     def operation_mode(self, mode):
         """Set the operation mode to a new value"""
         if mode == 'reset':
-            default_operation_mode = self.config['default_mode']
+            default_operation_mode = self.config['default_operation_mode']
             self.__dict__['_operation_mode'] = default_operation_mode
         elif mode is None or mode in self.config['supported_modes']:
             self.__dict__['_operation_mode'] = mode
