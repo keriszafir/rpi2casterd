@@ -76,7 +76,9 @@ def interface_page(interface):
     status.update(interface.state)
     status.update(speed='{}rpm'.format(interface.rpm()))
     status.update(signals=interface.signals)
-    return dict(name=str(interface), status=status, settings=interface.config)
+    config = interface.config
+    config.update(name=str(interface))
+    return dict(status=status, settings=config)
 
 
 @APP.route('/interfaces/<interface_id>/operation_mode', methods=ALL_METHODS)
