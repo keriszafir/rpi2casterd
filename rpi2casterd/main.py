@@ -335,11 +335,11 @@ class Interface:
         # initialize the interface with empty state
         default_operation_mode = config['default_operation_mode']
         default_row16_mode = config['default_row16_mode']
-        self.state = dict(wedge_0005=15, wedge_0075=15,
-                          working=False, water=False, air=False,
-                          motor=False, pump=False, sensor=False,
-                          current_operation_mode=default_operation_mode,
-                          current_row16_mode=default_row16_mode)
+        self.status = dict(wedge_0005=15, wedge_0075=15,
+                           working=False, water=False, air=False,
+                           motor=False, pump=False, sensor=False,
+                           current_operation_mode=default_operation_mode,
+                           current_row16_mode=default_row16_mode)
         # GPIO definitions (after setup, these will be actual GPIO numbers)
         self.gpios = dict()
         # store the current signals
@@ -361,7 +361,7 @@ class Interface:
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
             sensor_state = get_state(sensor_gpio)
-            self.state['sensor'] = bool(sensor_state)
+            self.status['sensor'] = bool(sensor_state)
             if sensor_state:
                 self.meter_events.append(time.time())
 
@@ -411,7 +411,7 @@ class Interface:
         raise MachineStopped."""
         start_time = time.time()
         timeout = timeout or self.config['sensor_timeout']
-        while self.state['sensor'] != new_state:
+        while self.status['sensor'] != new_state:
             if time.time() - start_time > timeout:
                 raise exc.MachineStopped
             # wait 10ms to ease the load on the CPU
@@ -420,17 +420,17 @@ class Interface:
     @property
     def operation_mode(self):
         """Get the current operation mode"""
-        default_operation_mode = self.config['default_operation_mode']
-        return self.state.get('current_operation_mode', default_operation_mode)
+        default_mode = self.config['default_operation_mode']
+        return self.status.get('current_operation_mode', default_mode)
 
     @operation_mode.setter
     def operation_mode(self, mode):
         """Set the operation mode to a new value"""
         if mode == 'reset':
             default_operation_mode = self.config['default_operation_mode']
-            self.state['current_operation_mode'] = default_operation_mode
+            self.status['current_operation_mode'] = default_operation_mode
         elif mode is None or mode in self.config['supported_operation_modes']:
-            self.state['current_operation_mode'] = mode
+            self.status['current_operation_mode'] = mode
         else:
             raise exc.UnsupportedMode(mode)
 
@@ -469,7 +469,7 @@ class Interface:
             """Start the machine.
             Casting requires that the machine is running before proceeding."""
             # don't let anyone else initialize an interface already initialized
-            if self.state['working']:
+            if self.status['working']:
                 raise exc.InterfaceBusy
 
             # reset the RPM counter
@@ -484,11 +484,11 @@ class Interface:
                 self.check_rotation()
             # properly initialized => mark it as working
             turn_on(self.gpios['working_led'])
-            self.state['working'] = True
+            self.status['working'] = True
 
         def stop():
             """Stop the machine."""
-            if not self.state['working']:
+            if not self.status['working']:
                 # don't stop a non-working interface
                 return
             self.pump_control(OFF)
@@ -500,7 +500,7 @@ class Interface:
             self.air_control(OFF)
             turn_off(self.gpios['working_led'])
             # release the interface so others can claim it
-            self.state['working'] = False
+            self.status['working'] = False
 
         if state is None:
             pass
@@ -508,7 +508,7 @@ class Interface:
             start()
         else:
             stop()
-        return self.state['working']
+        return self.status['working']
 
     def rpm(self):
         """Speed meter for rpi2casterd"""
@@ -541,7 +541,7 @@ class Interface:
             return False
         else:
             # state does not change
-            return self.state['pump']
+            return self.status['pump']
 
     def check_rotation(self, revolutions=3):
         """Check whether the machine is turning.
@@ -559,27 +559,27 @@ class Interface:
 
         # first check the pump status
         if found(['0075']) or found('NK'):
-            self.state['pump'] = True
+            self.status['pump'] = True
         elif found(['0005']) or found('NJ'):
-            self.state['pump'] = False
+            self.status['pump'] = False
 
         # check 0075: find the earliest row number or default to 15
         if found(['0075']) or found('NK'):
             for pos in range(1, 15):
                 if str(pos) in self.signals:
-                    self.state['wedge_0075'] = pos
+                    self.status['wedge_0075'] = pos
                     break
             else:
-                self.state['wedge_0075'] = 15
+                self.status['wedge_0075'] = 15
 
         # check 0005: find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
             for pos in range(1, 15):
                 if str(pos) in self.signals:
-                    self.state['wedge_0005'] = pos
+                    self.status['wedge_0005'] = pos
                     break
             else:
-                self.state['wedge_0005'] = 15
+                self.status['wedge_0005'] = 15
 
     @handle_machine_stop
     def valves_control(self, state):
@@ -602,20 +602,20 @@ class Interface:
             anything evaluating to True or False = turn on or off"""
         if state is None:
             # do nothing
-            return self.state['motor']
+            return self.status['motor']
         elif state:
             start_gpio = self.gpios['motor_start']
             turn_on(start_gpio)
             time.sleep(0.5)
             turn_off(start_gpio)
-            self.state['motor'] = True
+            self.status['motor'] = True
             return True
         else:
             stop_gpio = self.gpios['motor_stop']
             turn_on(stop_gpio)
             time.sleep(0.5)
             turn_off(stop_gpio)
-            self.state['motor'] = False
+            self.status['motor'] = False
             self.meter_events.clear()
             return False
 
@@ -625,14 +625,14 @@ class Interface:
             no state or None = get the air state,
             anything evaluating to True or False = turn on or off"""
         if state is None:
-            return self.state['air']
+            return self.status['air']
         elif state:
             turn_on(self.gpios['air'])
-            self.state['air'] = True
+            self.status['air'] = True
             return True
         else:
             turn_off(self.gpios['air'])
-            self.state['air'] = False
+            self.status['air'] = False
             return False
 
     @handle_machine_stop
@@ -641,14 +641,14 @@ class Interface:
             no state or None = get the water valve state,
             anything evaluating to True or False = turn on or off"""
         if state is None:
-            return self.state['water']
+            return self.status['water']
         elif state:
             turn_on(self.gpios['water'])
-            self.state['water'] = True
+            self.status['water'] = True
             return True
         else:
             turn_off(self.gpios['water'])
-            self.state['water'] = False
+            self.status['water'] = False
             return False
 
     def pump_control(self, state=None):
@@ -658,7 +658,7 @@ class Interface:
             """Start the pump."""
             pump_start_code = ['N', 'K', 'S', '0075']
             # get the current 0075 wedge position and preserve it
-            wedge_position = self.state['wedge_0075']
+            wedge_position = self.status['wedge_0075']
             pump_start_code.append(str(wedge_position))
             # start the pump
             self.send_signals(pump_start_code)
@@ -668,7 +668,7 @@ class Interface:
             This function will send the pump stop combination (NJS 0005) twice
             to make sure that the pump is turned off.
             In case of failure, repeat."""
-            if not self.state['pump']:
+            if not self.status['pump']:
                 # that means the pump is not working, so why stop it?
                 return
 
@@ -681,14 +681,14 @@ class Interface:
             pump_stop_code = ['N', 'J', 'S', '0005']
 
             # don't change the current 0005 wedge position
-            wedge_position = self.state['wedge_0005']
+            wedge_position = self.status['wedge_0005']
             pump_stop_code.append(str(wedge_position))
 
             # use longer timeout
             timeout = self.config['pump_stop_timeout']
 
             # try as long as necessary
-            while self.state['pump']:
+            while self.status['pump']:
                 self.send_signals(pump_stop_code, timeout=timeout)
                 self.send_signals(pump_stop_code, timeout=timeout)
 
@@ -703,7 +703,7 @@ class Interface:
             start()
         else:
             stop()
-        return self.state['pump']
+        return self.status['pump']
 
     def justification(self, galley_trip=False,
                       wedge_0005=None, wedge_0075=None):
@@ -732,9 +732,9 @@ class Interface:
             """Send a 0005+code"""
             self.send_signals([*'NKS', '0075', str(new_0075)])
 
-        pump_working = self.state['pump']
-        current_0005 = self.state['wedge_0005']
-        current_0075 = self.state['wedge_0075']
+        pump_working = self.status['pump']
+        current_0005 = self.status['wedge_0005']
+        current_0075 = self.status['wedge_0075']
         new_0005 = wedge_0005 or current_0005
         new_0075 = wedge_0075 or current_0075
 
@@ -921,7 +921,7 @@ class Interface:
         Wait for sensor to go ON, turn on the valves,
         wait for sensor to go OFF, turn off the valves.
         """
-        if not self.state['working']:
+        if not self.status['working']:
             raise exc.InterfaceNotStarted
 
         self.operation_mode = 'casting'
@@ -937,7 +937,7 @@ class Interface:
     def test(self, input_signals):
         """Turn off any previous combination, then send signals.
         """
-        if not self.state['working']:
+        if not self.status['working']:
             self.machine_control(True)
 
         self.operation_mode = None
@@ -953,7 +953,7 @@ class Interface:
         then turn off the valves and wait for them to go down
         ("punching_off_time").
         """
-        if not self.state['working']:
+        if not self.status['working']:
             self.machine_control(True)
 
         self.operation_mode = 'punching'

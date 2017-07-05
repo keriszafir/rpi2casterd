@@ -73,7 +73,7 @@ def interface_page(interface):
         settings: static configuration (in /etc/rpi2casterd.conf)
     """
     status = dict()
-    status.update(interface.state)
+    status.update(interface.status)
     status.update(speed='{}rpm'.format(interface.rpm()))
     status.update(signals=interface.signals)
     status.update(current_operation_mode=interface.operation_mode)
