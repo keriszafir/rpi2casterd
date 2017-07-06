@@ -72,21 +72,40 @@ def interface_page(interface):
         status: current interface state,
         settings: static configuration (in /etc/rpi2casterd.conf)
     """
-    status = dict()
-    status.update(interface.status)
-    status.update(speed='{}rpm'.format(interface.rpm()))
-    status.update(signals=interface.signals)
-    status.update(current_operation_mode=interface.operation_mode)
-    status.update(current_row16_mode=interface.row16_mode)
     config = interface.config
     config.update(name=str(interface))
-    return dict(status=status, settings=config)
+    return dict(status=interface.current_status, settings=config)
+
+
+@APP.route('/interfaces/<interface_id>', methods=(POST, PUT))
+@handle_request
+def handle_interface(interface):
+    """Send information to the interface.
+        Accepts the request parameters:
+        testing_mode [True/False] - set the testing mode,
+        cast - cast signals,
+        punch - punch signals,
+        test - test signals.
+    """
+    request_data = request.get_json()
+    interface.testing = request_data.get('testing')
+    test_signals = request_data.get('test_signals') or []
+    cast_signals = request_data.get('cast_signals') or []
+    punch_signals = request_data.get('punch_signals') or []
+    if test_signals:
+        interface.test(test_signals)
+    elif cast_signals:
+        interface.cast(cast_signals)
+    elif punch_signals:
+        interface.punch(punch_signals)
+    # response for processing by the casting software
+    return interface.current_status
 
 
 @APP.route('/interfaces/<interface_id>/operation_mode', methods=ALL_METHODS)
 @handle_request
 def operation_mode(interface):
-    """Get or set the operation mode (None = testing; casting or punching).
+    """Get or set the operation mode (casting or punching).
     GET: gets the current setting,
     POST or PUT: updates the setting,
     DELETE: resets the setting to its default value.
@@ -99,43 +118,9 @@ def operation_mode(interface):
     return dict(mode=interface.operation_mode)
 
 
-@APP.route('/interfaces/<interface_id>/cast', methods=(POST, PUT))
-@handle_request
-def cast(interface):
-    """Cast the signals with a composition caster.
-    Raise UnsupportedMode if the casting mode is not supported."""
-    request_data = request.get_json()
-    signals = request_data.get('signals')
-    timeout = request_data.get('timeout')
-    interface.cast(signals, timeout)
-    return dict(signals=interface.signals)
-
-
-@APP.route('/interfaces/<interface_id>/punch', methods=(POST, PUT))
-@handle_request
-def punch(interface):
-    """Send the signals to a ribbon perforator.
-    Raise UnsupportedMode if the punching mode is not supported."""
-    request_data = request.get_json()
-    signals = request_data.get('signals')
-    interface.punch(signals)
-    return dict(signals=interface.signals)
-
-
-@APP.route('/interfaces/<interface_id>/test', methods=(POST, PUT))
-@handle_request
-def test(interface):
-    """Test the interface/valves/machine by sending arbitrary signals.
-    This will keep the valves open until called off."""
-    request_data = request.get_json()
-    signals = request_data.get('signals')
-    interface.test(signals)
-    return dict(signals=interface.signals)
-
-
 @APP.route('/interfaces/<interface_id>/row16_mode', methods=ALL_METHODS)
 @handle_request
-def row_16_addressing_mode(interface):
+def row16_mode(interface):
     """Get or set the row16 addressing mode (None = off; HMN, KMN, unit shift).
     GET: gets the current setting,
     POST or PUT: updates the setting,
@@ -147,6 +132,22 @@ def row_16_addressing_mode(interface):
     elif request.method == DELETE:
         interface.row16_mode = 'reset'
     return dict(mode=interface.row16_mode)
+
+
+@APP.route('/interfaces/<interface_id>/testing', methods=ALL_METHODS)
+@handle_request
+def testing_mode(interface):
+    """Get or set the testing mode:
+        GET: gets the current setting,
+        POST or PUT: updates the setting,
+        DELETE: resets to False.
+    """
+    if request.method in (POST, PUT):
+        request_data = request.get_json()
+        interface.testing = request_data.get('testing')
+    elif request.method == DELETE:
+        interface.testing = False
+    return dict(testing=interface.testing)
 
 
 @APP.route('/interfaces/<interface_id>/justification', methods=ALL_METHODS)
@@ -181,9 +182,9 @@ def signals(interface):
         operation and row 16 addressing mode."""
     if request.method in (POST, PUT):
         request_data = request.get_json() or {}
-        signals = request_data.get('signals') or []
+        codes = request_data.get('signals') or []
         timeout = request_data.get('timeout')
-        interface.send_signals(signals, timeout)
+        interface.send_signals(codes, timeout)
     return dict(signals=interface.signals)
 
 

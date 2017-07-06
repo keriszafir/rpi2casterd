@@ -8,7 +8,7 @@ using selectable backend libraries for greater configurability.
 """
 from collections import deque, OrderedDict
 from contextlib import suppress
-from functools import partial, wraps
+from functools import wraps
 import configparser
 import signal
 import subprocess
@@ -323,7 +323,71 @@ def main():
         teardown()
 
 
-class Interface:
+class InterfaceBase:
+    """Basic data structures of an interface"""
+    def __init__(self, config_dict):
+        self.config = config_dict
+        # initialize the interface with empty state
+        default_operation_mode = self.config['default_operation_mode']
+        default_row16_mode = self.config['default_row16_mode']
+        self.status = dict(wedge_0005=15, wedge_0075=15, testing=False,
+                           working=False, water=False, air=False,
+                           motor=False, pump=False, sensor=False,
+                           current_operation_mode=default_operation_mode,
+                           current_row16_mode=default_row16_mode)
+
+    @property
+    def operation_mode(self):
+        """Get the current operation mode"""
+        default_mode = self.config['default_operation_mode']
+        return self.status.get('current_operation_mode', default_mode)
+
+    @operation_mode.setter
+    def operation_mode(self, mode):
+        """Set the operation mode to a new value"""
+        if mode == 'reset':
+            default_operation_mode = self.config['default_operation_mode']
+            self.status['current_operation_mode'] = default_operation_mode
+        elif mode in self.config['supported_operation_modes']:
+            self.status['current_operation_mode'] = mode
+        else:
+            raise exc.UnsupportedMode(mode)
+
+    @property
+    def row16_mode(self):
+        """Get the current row 16 addressing mode"""
+        return self.status['current_row16_mode']
+
+    @row16_mode.setter
+    def row16_mode(self, mode):
+        """Set the row 16 addressing mode to a new value"""
+        if mode == 'reset':
+            default_row16_mode = self.config['default_row16_mode']
+            self.status['current_row16_mode'] = default_row16_mode
+        elif mode is None:
+            # allow to turn it off in any case
+            self.status['current_row16_mode'] = mode
+        elif self.operation_mode == 'casting':
+            # allow only supported row 16 addressing modes
+            if mode in self.config['supported_row16_modes']:
+                self.status['current_row16_mode'] = mode
+            else:
+                raise exc.UnsupportedRow16Mode(mode)
+        elif mode in ('HMN', 'KMN', 'unit shift'):
+            # operation mode is testing (None) or punching
+            self.status['current_row16_mode'] = mode
+
+    @property
+    def testing(self):
+        """Temporary testing mode"""
+        return self.status['testing']
+
+    @testing.setter
+    def testing(self, state):
+        self.status['testing'] = True if state else False
+
+
+class Interface(InterfaceBase):
     """Hardware control interface"""
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
                             error_led=GPIO.OUT, working_led=GPIO.OUT,
@@ -331,15 +395,7 @@ class Interface:
                             motor_stop=GPIO.OUT, motor_start=GPIO.OUT)
 
     def __init__(self, config_dict):
-        config = self.config = config_dict
-        # initialize the interface with empty state
-        default_operation_mode = config['default_operation_mode']
-        default_row16_mode = config['default_row16_mode']
-        self.status = dict(wedge_0005=15, wedge_0075=15,
-                           working=False, water=False, air=False,
-                           motor=False, pump=False, sensor=False,
-                           current_operation_mode=default_operation_mode,
-                           current_row16_mode=default_row16_mode)
+        super().__init__(config_dict)
         # GPIO definitions (after setup, these will be actual GPIO numbers)
         self.gpios = dict()
         # store the current signals
@@ -349,7 +405,7 @@ class Interface:
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
         # configure the hardware
-        self.hardware_setup(config)
+        self.hardware_setup(self.config)
 
     def __str__(self):
         return 'Raspberry Pi interface ({})'.format(self.output.name)
@@ -417,48 +473,6 @@ class Interface:
             # wait 10ms to ease the load on the CPU
             time.sleep(0.01)
 
-    @property
-    def operation_mode(self):
-        """Get the current operation mode"""
-        default_mode = self.config['default_operation_mode']
-        return self.status.get('current_operation_mode', default_mode)
-
-    @operation_mode.setter
-    def operation_mode(self, mode):
-        """Set the operation mode to a new value"""
-        if mode == 'reset':
-            default_operation_mode = self.config['default_operation_mode']
-            self.status['current_operation_mode'] = default_operation_mode
-        elif mode is None or mode in self.config['supported_operation_modes']:
-            self.status['current_operation_mode'] = mode
-        else:
-            raise exc.UnsupportedMode(mode)
-
-    @property
-    def row16_mode(self):
-        """Get the current row 16 addressing mode"""
-        default_row16_mode = self.config['default_row16_mode']
-        return self.__dict__.get('_row16_mode', default_row16_mode)
-
-    @row16_mode.setter
-    def row16_mode(self, mode):
-        """Set the row 16 addressing mode to a new value"""
-        if mode == 'reset':
-            default_row16_mode = self.config['default_row16_mode']
-            self.__dict__['_row16_mode'] = default_row16_mode
-        elif mode is None:
-            # allow to turn it off in any case
-            self.__dict__['_row16_mode'] = mode
-        elif self.operation_mode == 'casting':
-            # allow only supported row 16 addressing modes
-            if mode in self.config['supported_row16_modes']:
-                self.__dict__['_row16_mode'] = mode
-            else:
-                raise exc.UnsupportedRow16Mode(mode)
-        elif mode in ('HMN', 'KMN', 'unit shift'):
-            # operation mode is testing (None) or punching
-            self.__dict__['_row16_mode'] = mode
-
     def machine_control(self, state=None):
         """Machine and interface control.
         If no state or state is None, return the current working state.
@@ -501,6 +515,7 @@ class Interface:
             turn_off(self.gpios['working_led'])
             # release the interface so others can claim it
             self.status['working'] = False
+            self.testing = False
 
         if state is None:
             pass
@@ -527,6 +542,15 @@ class Interface:
         except IndexError:
             # not enough events / measurement points
             return 0
+
+    @property
+    def current_status(self):
+        """Get the most current status."""
+        status = dict()
+        status.update(self.status)
+        status.update(speed='{}rpm'.format(self.rpm()))
+        status.update(signals=self.signals)
+        return status
 
     def check_pump(self):
         """Check if the pump is working or not"""
@@ -581,7 +605,6 @@ class Interface:
             else:
                 self.status['wedge_0005'] = 15
 
-    @handle_machine_stop
     def valves_control(self, state):
         """Turn valves on or off, check valve status.
         Accepts signals (turn on), False (turn off) or None (get the status)"""
@@ -619,7 +642,6 @@ class Interface:
             self.meter_events.clear()
             return False
 
-    @handle_machine_stop
     def air_control(self, state=None):
         """Air supply control: master compressed air solenoid valve.
             no state or None = get the air state,
@@ -635,7 +657,6 @@ class Interface:
             self.status['air'] = False
             return False
 
-    @handle_machine_stop
     def water_control(self, state=None):
         """Cooling water control:
             no state or None = get the water valve state,
@@ -651,6 +672,7 @@ class Interface:
             self.status['water'] = False
             return False
 
+    @handle_machine_stop
     def pump_control(self, state=None):
         """No state: get the pump status.
         Anything evaluating to True or False: start or stop the pump"""
@@ -779,45 +801,20 @@ class Interface:
             try:
                 _source = source.upper()
             except AttributeError:
-                _source = ''.join(str(x).upper() for x in source)
+                _source = ''.join(str(x) for x in source).upper()
             # read the signals to know what's inside
             input_signals = tuple(['0005', '0075',
                                    *(str(x) for x in range(16, 0, -1)),
                                    *'ABCDEFGHIJKLMNOS'])
             return {s for s in input_signals if find(s)}
 
-        def strip_16(source):
+        def strip_16():
             """Get rid of the "16" signal and replace it with "15"."""
-            sigset = {str(s).upper() for s in source}
-            if '16' in sigset:
-                sigset.discard('16')
-                sigset.add('15')
-            return sigset
+            if '16' in parsed_signals:
+                parsed_signals.discard('16')
+                parsed_signals.add('15')
 
-        def convert_o15(source):
-            """Change O and 15 to a combined O+15 signal"""
-            source_signals = set(source)
-            for sig in ('O', '15'):
-                if sig in source_signals:
-                    source_signals.discard(sig)
-                    source_signals.update('O15')
-            return source_signals
-
-        def strip_o15(source):
-            """For casting, don't use O+15"""
-            source_signals = set(source)
-            source_signals.discard('O15')
-            return source_signals
-
-        def add_missing_o15(source):
-            """If length of signals is less than 2, add an O+15,
-            so that when punching, the ribbon will be advanced properly."""
-            source_signals = set(source)
-            if len(source_signals) < 2:
-                source_signals.update('O15')
-            return source_signals
-
-        def convert_hmn(source):
+        def convert_hmn():
             """HMN addressing mode - developed by Monotype, based on KMN.
             Uncommon."""
             # NI, NL, M -> add H -> HNI, HNL, HM
@@ -827,22 +824,21 @@ class Interface:
             # {ABCDEFGIJKL} -> add HM -> HM{ABCDEFGIJKL}
 
             # earlier rows than 16 won't trigger the attachment -> early return
-            sigset = {str(s).upper() for s in source}
             for i in range(1, 16):
-                if str(i) in sigset:
-                    return sigset
+                if str(i) in parsed_signals:
+                    return
 
             columns = 'NI', 'NL', 'H', 'M', 'N', 'O'
             extras = 'H', 'H', 'N', 'H', 'M', 'HMN'
-            if '16' in sigset:
+            if '16' in parsed_signals:
+                parsed_signals.discard('16')
                 for column, extra in zip(columns, extras):
-                    if sigset.issuperset(column):
-                        sigset.discard('16')
-                        sigset.update(extra)
-                        break
-            return sigset
+                    if parsed_signals.issuperset(column):
+                        parsed_signals.update(extra)
+                        return
+                parsed_signals.update('HM')
 
-        def convert_kmn(source):
+        def convert_kmn():
             """KMN addressing mode - invented by a British printshop.
             Very uncommon."""
             # NI, NL, M -> add K -> KNI, KNL, KM
@@ -852,51 +848,67 @@ class Interface:
             # {ABCDEFGHIJL} -> add KM -> KM{ABCDEFGHIJL}
 
             # earlier rows than 16 won't trigger the attachment -> early return
-            sigset = {str(s).upper() for s in source}
             for i in range(1, 16):
-                if str(i) in sigset:
-                    return sigset
+                if str(i) in parsed_signals:
+                    return
 
             columns = 'NI', 'NL', 'K', 'M', 'N', 'O'
             extras = 'K', 'K', 'N', 'K', 'M', 'HMN'
-            if '16' in sigset:
+            if '16' in parsed_signals:
+                parsed_signals.discard('16')
                 for column, extra in zip(columns, extras):
-                    if sigset.issuperset(column):
-                        sigset.update(extra)
-                        sigset.discard('16')
-                        break
-            return sigset
+                    if parsed_signals.issuperset(column):
+                        parsed_signals.update(extra)
+                        return
+                parsed_signals.update('KM')
 
-        def convert_unitshift(source):
+        def convert_unitshift():
             """Unit-shift addressing mode - rather common,
             designed by Monotype and introduced in 1963"""
-            sigset = {str(s).upper() for s in source}
-            if 'D' in sigset:
+            if 'D' in parsed_signals:
                 # when the attachment is on, the D signal is routed
                 # to unit-shift activation piston instead of column D air pin
                 # this pin is activated by EF combination instead
-                sigset.discard('D')
-                sigset.update('EF')
-            if '16' in sigset:
+                parsed_signals.discard('D')
+                parsed_signals.update('EF')
+            if '16' in parsed_signals:
                 # use unit shift if the row signal is 16
                 # make it possible to shift the diecase on earlier rows
-                sigset.update('D')
-                sigset.discard('16')
-            return sigset
+                parsed_signals.update('D')
+                parsed_signals.discard('16')
+
+        def convert_o15():
+            """Change O and 15 to a combined O+15 signal"""
+            for sig in ('O', '15'):
+                if sig in parsed_signals:
+                    parsed_signals.discard(sig)
+                    parsed_signals.add('O15')
+
+        def strip_o15():
+            """For casting, don't use O+15"""
+            parsed_signals.discard('O15')
+
+        def add_missing_o15():
+            """If length of signals is less than 2, add an O+15,
+            so that when punching, the ribbon will be advanced properly."""
+            if len(parsed_signals) < 2:
+                parsed_signals.add('O15')
 
         parsed_signals = parse_signals(input_signals)
         # based on row 16 addressing mode,
         # decide which signal conversion should be applied
-        row16_converters = {None: strip_16, 'unit shift': convert_unitshift,
-                            'HMN': convert_hmn, 'KMN': convert_kmn}
-        signals = row16_converters[self.row16_mode](parsed_signals)
+        row16_conv = {None: strip_16, 'unit shift': convert_unitshift,
+                      'HMN': convert_hmn, 'KMN': convert_kmn}[self.row16_mode]
+        row16_conv()
         # based on the operation mode, strip, convert or add O/15 signals
         # casting: strip (as it's not used),
         # punching: add if less than 2 signals,
         # testing: convert O or 15 to O+15 which will be sent
-        o15_converters = {'casting': strip_o15, 'punching': add_missing_o15,
-                          None: convert_o15}
-        return o15_converters[self.operation_mode](signals)
+        mode_conv = (convert_o15 if self.testing
+                     else add_missing_o15 if self.operation_mode == 'punching'
+                     else strip_o15)
+        mode_conv()
+        return parsed_signals
 
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
@@ -908,12 +920,12 @@ class Interface:
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        # based on operation mode, decide what to do with the signals
-        actions = {'casting': partial(self.cast, timeout=timeout),
-                   'punching': self.punch, None: self.test}
-
-        # test/cast/punch the signals
-        actions[self.operation_mode](signals)
+        if self.testing:
+            self.test(signals)
+        elif self.operation_mode == 'casting':
+            self.cast(signals, timeout=timeout)
+        elif self.operation_mode == 'punching':
+            self.punch(signals)
 
     def cast(self, input_signals, timeout=None):
         """Monotype composition caster.
@@ -940,7 +952,7 @@ class Interface:
         if not self.status['working']:
             self.machine_control(True)
 
-        self.operation_mode = None
+        self.testing = True
         codes = self.prepare_signals(input_signals)
         # change the active combination
         self.valves_control(OFF)
