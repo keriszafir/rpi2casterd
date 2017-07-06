@@ -330,7 +330,7 @@ class InterfaceBase:
         # initialize the interface with empty state
         default_operation_mode = self.config['default_operation_mode']
         default_row16_mode = self.config['default_row16_mode']
-        self.status = dict(wedge_0005=15, wedge_0075=15, testing=False,
+        self.status = dict(wedge_0005=15, wedge_0075=15, testing_mode=False,
                            working=False, water=False, air=False,
                            motor=False, pump=False, sensor=False,
                            current_operation_mode=default_operation_mode,
@@ -378,13 +378,13 @@ class InterfaceBase:
             self.status['current_row16_mode'] = mode
 
     @property
-    def testing(self):
+    def testing_mode(self):
         """Temporary testing mode"""
-        return self.status['testing']
+        return self.status['testing_mode']
 
-    @testing.setter
-    def testing(self, state):
-        self.status['testing'] = True if state else False
+    @testing_mode.setter
+    def testing_mode(self, state):
+        self.status['testing_mode'] = True if state else False
 
 
 class Interface(InterfaceBase):
@@ -515,7 +515,7 @@ class Interface(InterfaceBase):
             turn_off(self.gpios['working_led'])
             # release the interface so others can claim it
             self.status['working'] = False
-            self.testing = False
+            self.testing_mode = False
 
         if state is None:
             pass
@@ -904,7 +904,7 @@ class Interface(InterfaceBase):
         # casting: strip (as it's not used),
         # punching: add if less than 2 signals,
         # testing: convert O or 15 to O+15 which will be sent
-        mode_conv = (convert_o15 if self.testing
+        mode_conv = (convert_o15 if self.testing_mode
                      else add_missing_o15 if self.operation_mode == 'punching'
                      else strip_o15)
         mode_conv()
@@ -920,7 +920,7 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        if self.testing:
+        if self.testing_mode:
             self.test(signals)
         elif self.operation_mode == 'casting':
             self.cast(signals, timeout=timeout)
@@ -952,7 +952,7 @@ class Interface(InterfaceBase):
         if not self.status['working']:
             self.machine_control(True)
 
-        self.testing = True
+        self.testing_mode = True
         codes = self.prepare_signals(input_signals)
         # change the active combination
         self.valves_control(OFF)

@@ -88,7 +88,7 @@ def handle_interface(interface):
         test - test signals.
     """
     request_data = request.get_json()
-    interface.testing = request_data.get('testing')
+    interface.testing_mode = request_data.get('testing_mode')
     test_signals = request_data.get('test_signals') or []
     cast_signals = request_data.get('cast_signals') or []
     punch_signals = request_data.get('punch_signals') or []
