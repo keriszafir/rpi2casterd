@@ -134,22 +134,6 @@ def row16_mode(interface):
     return dict(mode=interface.row16_mode)
 
 
-@APP.route('/interfaces/<interface_id>/testing', methods=ALL_METHODS)
-@handle_request
-def testing_mode(interface):
-    """Get or set the testing mode:
-        GET: gets the current setting,
-        POST or PUT: updates the setting,
-        DELETE: resets to False.
-    """
-    if request.method in (POST, PUT):
-        request_data = request.get_json()
-        interface.testing = request_data.get('testing')
-    elif request.method == DELETE:
-        interface.testing = False
-    return dict(testing=interface.testing)
-
-
 @APP.route('/interfaces/<interface_id>/justification', methods=ALL_METHODS)
 @handle_request
 def justification(interface):
@@ -185,7 +169,7 @@ def signals(interface):
         codes = request_data.get('signals') or []
         timeout = request_data.get('timeout')
         interface.send_signals(codes, timeout)
-    return dict(signals=interface.signals)
+    return interface.current_status
 
 
 @APP.route('/interfaces/<interface_id>/<device_name>', methods=ALL_METHODS)
