@@ -400,6 +400,7 @@ class InterfaceBase:
 
 class Interface(InterfaceBase):
     """Hardware control interface"""
+    name = 'Raspberry Pi interface'
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
                             error_led=GPIO.OUT, working_led=GPIO.OUT,
                             air=GPIO.OUT, water=GPIO.OUT,
@@ -419,7 +420,7 @@ class Interface(InterfaceBase):
         self.hardware_setup(self.config)
 
     def __str__(self):
-        return 'Raspberry Pi interface ({})'.format(self.output.name)
+        return self.name
 
     def hardware_setup(self, config):
         """Configure the inputs and outputs.
