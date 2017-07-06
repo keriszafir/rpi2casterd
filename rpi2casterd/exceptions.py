@@ -37,3 +37,9 @@ class ConfigurationError(Exception):
     """configuration error: wrong name or cannot import module"""
     code = 5
     name = 'hardware configuration error'
+
+
+class NoUsefulSignals(Exception):
+    """no useful signals found in the sequence."""
+    code = 6
+    name = 'no useful signals found'

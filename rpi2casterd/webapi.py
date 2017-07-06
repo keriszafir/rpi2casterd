@@ -45,8 +45,12 @@ def handle_request(routine):
             abort(404)
         except NotImplementedError:
             abort(501)
-        except (exc.InterfaceNotStarted, exc.InterfaceBusy, exc.MachineStopped,
-                exc.UnsupportedMode, exc.UnsupportedRow16Mode) as error:
+        except (exc.InterfaceNotStarted,
+                exc.InterfaceBusy,
+                exc.MachineStopped,
+                exc.UnsupportedMode,
+                exc.UnsupportedRow16Mode,
+                exc.NoUsefulSignals) as error:
             return failure(error)
     return wrapper
 

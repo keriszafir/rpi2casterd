@@ -797,28 +797,15 @@ class Interface(InterfaceBase):
 
     def prepare_signals(self, input_signals):
         """Prepare the incoming signals for casting, testing or punching."""
-        def parse_signals(source):
-            """Parse the incoming signals iterable into useful signals"""
-            def find(value):
-                """Detect and dispatch known signals in source string"""
-                nonlocal _source
-                string = str(value)
-                if string in _source:
-                    _source = _source.replace(string, '')
-                    return True
-                else:
-                    return False
-
-            # make sure it's an uppercase string
-            try:
-                _source = source.upper()
-            except AttributeError:
-                _source = ''.join(str(x) for x in source).upper()
-            # read the signals to know what's inside
-            input_signals = tuple(['0005', '0075',
-                                   *(str(x) for x in range(16, 0, -1)),
-                                   *'ABCDEFGHIJKLMNOS'])
-            return {s for s in input_signals if find(s)}
+        def is_present(value):
+            """Detect and dispatch known signals in source string"""
+            nonlocal source
+            string = str(value)
+            if string in source:
+                source = source.replace(string, '')
+                return True
+            else:
+                return False
 
         def strip_16():
             """Get rid of the "16" signal and replace it with "15"."""
@@ -903,23 +890,45 @@ class Interface(InterfaceBase):
         def add_missing_o15():
             """If length of signals is less than 2, add an O+15,
             so that when punching, the ribbon will be advanced properly."""
+            convert_o15()
             if len(parsed_signals) < 2:
                 parsed_signals.add('O15')
 
-        parsed_signals = parse_signals(input_signals)
+        try:
+            source = input_signals.upper()
+        except AttributeError:
+            source = ''.join(str(x) for x in input_signals).upper()
+        _source = source
+
+        useful = ['0005', '0075', *(str(x) for x in range(16, 0, -1)),
+                  *'ABCDEFGHIJKLMNOS']
+        parsed_signals = {s for s in useful if is_present(s)}
+
+        if not parsed_signals:
+            raise exc.NoUsefulSignals('{}: no useful signals found.'
+                                      .format(_source))
+
         # based on row 16 addressing mode,
         # decide which signal conversion should be applied
-        row16_conv = {None: strip_16, 'unit shift': convert_unitshift,
-                      'HMN': convert_hmn, 'KMN': convert_kmn}[self.row16_mode]
-        row16_conv()
+        if self.row16_mode == 'HMN':
+            convert_hmn()
+        elif self.row16_mode == 'KMN':
+            convert_kmn()
+        elif self.row16_mode == 'unit shift':
+            convert_unitshift()
+        else:
+            strip_16()
         # based on the operation mode, strip, convert or add O/15 signals
         # casting: strip (as it's not used),
         # punching: add if less than 2 signals,
         # testing: convert O or 15 to O+15 which will be sent
-        mode_conv = (convert_o15 if self.testing_mode
-                     else add_missing_o15 if self.operation_mode == 'punching'
-                     else strip_o15)
-        mode_conv()
+        if self.testing_mode:
+            convert_o15()
+        elif self.operation_mode == 'punching':
+            add_missing_o15()
+        else:
+            strip_o15()
+        # all ready for sending
         return parsed_signals
 
     def send_signals(self, signals, timeout=None):
