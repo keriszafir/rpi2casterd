@@ -89,16 +89,6 @@ def handle_interface(interface):
     """
     request_data = request.get_json()
     interface.testing_mode = request_data.get('testing_mode')
-    test_signals = request_data.get('test_signals') or []
-    cast_signals = request_data.get('cast_signals') or []
-    punch_signals = request_data.get('punch_signals') or []
-    if test_signals:
-        interface.test(test_signals)
-    elif cast_signals:
-        interface.cast(cast_signals)
-    elif punch_signals:
-        interface.punch(punch_signals)
-    # response for processing by the casting software
     return interface.current_status
 
 
@@ -164,7 +154,9 @@ def signals(interface):
     PUT/POST: sends the signals to the machine;
         the interface will parse and process them according to the current
         operation and row 16 addressing mode."""
-    if request.method in (POST, PUT):
+    if request.method == GET:
+        return dict(signals=interface.signals)
+    elif request.method in (POST, PUT):
         request_data = request.get_json() or {}
         codes = request_data.get('signals') or []
         timeout = request_data.get('timeout')
