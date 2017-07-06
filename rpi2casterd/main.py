@@ -125,7 +125,7 @@ def parse_configuration(source):
 
     config = OrderedDict()
     # caster name
-    config['name'] = get('name', str)
+    config['name'] = get('name', source, str)
     # supported operation and row 16 addressing modes
     modes = get('supported_operation_modes', source, strings)
     row16_modes = get('supported_row16_modes', source, strings)
