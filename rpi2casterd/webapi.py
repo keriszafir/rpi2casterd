@@ -72,9 +72,7 @@ def interface_page(interface):
         status: current interface state,
         settings: static configuration (in /etc/rpi2casterd.conf)
     """
-    config = interface.config
-    config.update(name=str(interface))
-    return dict(status=interface.current_status, settings=config)
+    return dict(status=interface.current_status, settings=interface.config)
 
 
 @APP.route('/interfaces/<interface_id>', methods=(POST, PUT))

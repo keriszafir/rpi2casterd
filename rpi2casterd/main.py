@@ -24,7 +24,8 @@ OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
 
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2casterd.conf'
-DEFAULTS = dict(listen_address='0.0.0.0:23017', output_driver='smbus',
+DEFAULTS = dict(name='Monotype composition caster',
+                listen_address='0.0.0.0:23017', output_driver='smbus',
                 shutdown_gpio='24', shutdown_command='shutdown -h now',
                 reboot_gpio='23', reboot_command='shutdown -r now',
                 startup_timeout='30', sensor_timeout='5',
@@ -123,6 +124,8 @@ def parse_configuration(source):
         return int(lcstring(input_string), 0)
 
     config = OrderedDict()
+    # caster name
+    config['name'] = get('name', str)
     # supported operation and row 16 addressing modes
     modes = get('supported_operation_modes', source, strings)
     row16_modes = get('supported_row16_modes', source, strings)
@@ -400,7 +403,6 @@ class InterfaceBase:
 
 class Interface(InterfaceBase):
     """Hardware control interface"""
-    name = 'Raspberry Pi interface'
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
                             error_led=GPIO.OUT, working_led=GPIO.OUT,
                             air=GPIO.OUT, water=GPIO.OUT,
@@ -420,7 +422,7 @@ class Interface(InterfaceBase):
         self.hardware_setup(self.config)
 
     def __str__(self):
-        return self.name
+        return self.config['name']
 
     def hardware_setup(self, config):
         """Configure the inputs and outputs.
