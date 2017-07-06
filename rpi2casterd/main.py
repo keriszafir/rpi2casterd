@@ -892,7 +892,11 @@ class Interface(InterfaceBase):
             so that when punching, the ribbon will be advanced properly."""
             convert_o15()
             if len(parsed_signals) < 2:
+                # need O15 to advance the ribbon
                 parsed_signals.add('O15')
+            elif len(parsed_signals) > 2:
+                # no need for an additional O15
+                parsed_signals.discard('O15')
 
         try:
             source = input_signals.upper()
