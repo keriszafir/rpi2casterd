@@ -931,7 +931,7 @@ class Interface(InterfaceBase):
         # all ready for sending
         return parsed_signals
 
-    def send_signals(self, signals, timeout=None):
+    def send_signals(self, input_signals, timeout=None):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -941,6 +941,7 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
+        signals = self.prepare_signals(input_signals)
         if self.testing_mode:
             self.test(signals)
         elif self.operation_mode == 'casting':
@@ -948,7 +949,7 @@ class Interface(InterfaceBase):
         elif self.operation_mode == 'punching':
             self.punch(signals)
 
-    def cast(self, input_signals, timeout=None):
+    def cast(self, codes, timeout=None):
         """Monotype composition caster.
 
         Wait for sensor to go ON, turn on the valves,
@@ -957,7 +958,6 @@ class Interface(InterfaceBase):
         if not self.status['working']:
             raise exc.InterfaceNotStarted
 
-        codes = self.prepare_signals(input_signals)
         # allow the use of a custom timeout
         timeout = timeout or self.config['sensor_timeout']
         # machine control cycle
@@ -966,18 +966,17 @@ class Interface(InterfaceBase):
         self.wait_for_sensor(OFF, timeout=timeout)
         self.valves_control(OFF)
 
-    def test(self, input_signals):
+    def test(self, codes):
         """Turn off any previous combination, then send signals.
         """
         if not self.status['working']:
             self.machine_control(True)
 
-        codes = self.prepare_signals(input_signals)
         # change the active combination
         self.valves_control(OFF)
         self.valves_control(codes)
 
-    def punch(self, input_signals):
+    def punch(self, codes):
         """Timer-driven ribbon perforator.
 
         Turn on the valves, wait the "punching_on_time",
@@ -987,7 +986,6 @@ class Interface(InterfaceBase):
         if not self.status['working']:
             self.machine_control(True)
 
-        codes = self.prepare_signals(input_signals)
         # timer-driven operation
         self.valves_control(codes)
         time.sleep(self.config['punching_on_time'])
