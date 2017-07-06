@@ -345,7 +345,11 @@ class InterfaceBase:
     @operation_mode.setter
     def operation_mode(self, mode):
         """Set the operation mode to a new value"""
-        if mode == 'reset':
+        if not mode:
+            return
+        elif self.status['working']:
+            raise exc.InterfaceBusy('Machine is working - cannot change mode')
+        elif mode == 'reset':
             default_operation_mode = self.config['default_operation_mode']
             self.status['current_operation_mode'] = default_operation_mode
         elif mode in self.config['supported_operation_modes']:
@@ -361,6 +365,10 @@ class InterfaceBase:
     @row16_mode.setter
     def row16_mode(self, mode):
         """Set the row 16 addressing mode to a new value"""
+        if mode not in (None, 'reset', 'HMN', 'KMN', 'unit shift'):
+            return
+        if self.status['working']:
+            raise exc.InterfaceBusy('Machine is working - cannot change mode')
         if mode == 'reset':
             default_row16_mode = self.config['default_row16_mode']
             self.status['current_row16_mode'] = default_row16_mode
@@ -384,6 +392,9 @@ class InterfaceBase:
 
     @testing_mode.setter
     def testing_mode(self, state):
+        """Set the testing mode on the interface"""
+        if self.status['working']:
+            raise exc.InterfaceBusy('Machine is working - cannot change mode')
         self.status['testing_mode'] = True if state else False
 
 
@@ -491,7 +502,7 @@ class Interface(InterfaceBase):
             # turn on the compressed air
             self.air_control(ON)
             # make sure the machine is turning before proceeding
-            if self.operation_mode == 'casting':
+            if self.operation_mode == 'casting' and not self.testing_mode:
                 # turn on the cooling water and motor
                 self.water_control(ON)
                 self.motor_control(ON)
@@ -502,19 +513,17 @@ class Interface(InterfaceBase):
 
         def stop():
             """Stop the machine."""
-            if not self.status['working']:
-                # don't stop a non-working interface
-                return
-            self.pump_control(OFF)
-            self.valves_control(OFF)
-            self.signals = []
-            if self.operation_mode == 'casting':
-                self.motor_control(OFF)
-                self.water_control(OFF)
-            self.air_control(OFF)
-            turn_off(self.gpios['working_led'])
-            # release the interface so others can claim it
-            self.status['working'] = False
+            if self.status['working']:
+                self.pump_control(OFF)
+                self.valves_control(OFF)
+                self.signals = []
+                if self.operation_mode == 'casting' and not self.testing_mode:
+                    self.motor_control(OFF)
+                    self.water_control(OFF)
+                self.air_control(OFF)
+                turn_off(self.gpios['working_led'])
+                # release the interface so others can claim it
+                self.status['working'] = False
             self.testing_mode = False
 
         if state is None:
@@ -936,7 +945,6 @@ class Interface(InterfaceBase):
         if not self.status['working']:
             raise exc.InterfaceNotStarted
 
-        self.operation_mode = 'casting'
         codes = self.prepare_signals(input_signals)
         # allow the use of a custom timeout
         timeout = timeout or self.config['sensor_timeout']
@@ -952,7 +960,6 @@ class Interface(InterfaceBase):
         if not self.status['working']:
             self.machine_control(True)
 
-        self.testing_mode = True
         codes = self.prepare_signals(input_signals)
         # change the active combination
         self.valves_control(OFF)
@@ -968,7 +975,6 @@ class Interface(InterfaceBase):
         if not self.status['working']:
             self.machine_control(True)
 
-        self.operation_mode = 'punching'
         codes = self.prepare_signals(input_signals)
         # timer-driven operation
         self.valves_control(codes)
