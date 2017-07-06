@@ -49,8 +49,7 @@ def handle_request(routine):
                 exc.InterfaceBusy,
                 exc.MachineStopped,
                 exc.UnsupportedMode,
-                exc.UnsupportedRow16Mode,
-                exc.NoUsefulSignals) as error:
+                exc.UnsupportedRow16Mode) as error:
             return failure(error)
     return wrapper
 
@@ -163,6 +162,8 @@ def signals(interface):
         codes = request_data.get('signals') or []
         timeout = request_data.get('timeout')
         interface.send_signals(codes, timeout)
+    elif request.method == DELETE:
+        interface.valves_control(False)
     return interface.current_status
 
 

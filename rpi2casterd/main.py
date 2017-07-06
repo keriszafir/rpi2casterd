@@ -898,15 +898,10 @@ class Interface(InterfaceBase):
             source = input_signals.upper()
         except AttributeError:
             source = ''.join(str(x) for x in input_signals).upper()
-        _source = source
 
         useful = ['0005', '0075', *(str(x) for x in range(16, 0, -1)),
                   *'ABCDEFGHIJKLMNOS']
         parsed_signals = {s for s in useful if is_present(s)}
-
-        if not parsed_signals:
-            raise exc.NoUsefulSignals('{}: no useful signals found.'
-                                      .format(_source))
 
         # based on row 16 addressing mode,
         # decide which signal conversion should be applied
@@ -942,7 +937,9 @@ class Interface(InterfaceBase):
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
         signals = self.prepare_signals(input_signals)
-        if self.testing_mode:
+        if not signals:
+            self.valves_control(OFF)
+        elif self.testing_mode:
             self.test(signals)
         elif self.operation_mode == 'casting':
             self.cast(signals, timeout=timeout)
