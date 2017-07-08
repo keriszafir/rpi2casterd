@@ -15,7 +15,8 @@ import subprocess
 import time
 import RPi.GPIO as GPIO
 
-from rpi2casterd import exceptions as exc
+import librpi2caster as lrp2c
+from librpi2caster import ON, OFF, HMN, KMN, UNITSHIFT, CASTING, PUNCHING
 from rpi2casterd.webapi import INTERFACES, APP
 
 # signals to send to the valves
@@ -41,27 +42,34 @@ DEFAULTS = dict(name='Monotype composition caster',
                 valve2='F,S,E,D,0075,C,B,A',
                 valve3='1,2,3,4,5,6,7,8',
                 valve4='9,10,11,12,13,14,0005,O15',
-                supported_operation_modes='casting, punching',
-                supported_row16_modes='HMN, KMN, unit shift')
+                supported_operation_modes=', '.join((CASTING, PUNCHING)),
+                supported_row16_modes=', '.join((HMN, KMN, UNITSHIFT)))
 CFG = configparser.ConfigParser(defaults=DEFAULTS)
 CFG.read(CONFIGURATION_PATH)
-
-# Status for readability
-ON, OFF = True, False
 
 # Initialize the application
 GPIO.setmode(GPIO.BCM)
 LEDS = dict()
 
 
-def turn_on(gpio):
+def turn_on(gpio, raise_exception=False):
     """Turn on a specified GPIO output"""
-    GPIO.output(gpio, ON)
+    try:
+        GPIO.output(gpio, ON)
+    except ValueError:
+        # GPIO pin was None
+        if raise_exception:
+            raise NotImplementedError
 
 
-def turn_off(gpio):
+def turn_off(gpio, raise_exception=False):
     """Turn off a specified GPIO output"""
-    GPIO.output(gpio, OFF)
+    try:
+        GPIO.output(gpio, OFF)
+    except ValueError:
+        # GPIO pin was None
+        if raise_exception:
+            raise NotImplementedError
 
 
 def get_state(gpio):
@@ -69,15 +77,19 @@ def get_state(gpio):
     return GPIO.input(gpio)
 
 
+def toggle(gpio):
+    """Change the state of a GPIO output"""
+    current_state = GPIO.input(gpio)
+    GPIO.output(gpio, not current_state)
+
+
 def blink(gpio=None, seconds=0.5, times=3):
     """Blinks the LED"""
     led_gpio = LEDS.get(gpio)
     if not led_gpio:
         return
-    for _ in range(times):
-        turn_off(led_gpio)
-        time.sleep(seconds)
-        turn_on(led_gpio)
+    for _ in range(times * 2):
+        toggle(led_gpio)
         time.sleep(seconds)
 
 
@@ -123,6 +135,14 @@ def parse_configuration(source):
         """Convert a decimal, octal, binary or hexadecimal string to integer"""
         return int(lcstring(input_string), 0)
 
+    def inone(input_string):
+        """Return integer or None"""
+        stripped = input_string.strip()
+        try:
+            return int(stripped)
+        except ValueError:
+            return None
+
     config = OrderedDict()
     # caster name
     config['name'] = get('name', source, str)
@@ -132,7 +152,7 @@ def parse_configuration(source):
     config['supported_operation_modes'] = modes
     config['supported_row16_modes'] = row16_modes
     config['default_operation_mode'] = modes[0]
-    config['default_row16_mode'] = None
+    config['default_row16_mode'] = OFF
 
     # determine the output driver
     config['output_driver'] = get('output_driver', source, lcstring)
@@ -145,14 +165,14 @@ def parse_configuration(source):
     config['punching_off_time'] = get('punching_off_time', source, float)
 
     # interface settings: control GPIOs
-    config['sensor_gpio'] = get('sensor_gpio', source, int)
-    config['error_led_gpio'] = get('error_led_gpio', source, int)
-    config['working_led_gpio'] = get('working_led_gpio', source, int)
-    config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, int)
-    config['motor_start_gpio'] = get('motor_start_gpio', source, int)
-    config['motor_stop_gpio'] = get('motor_stop_gpio', source, int)
-    config['water_gpio'] = get('water_gpio', source, int)
-    config['air_gpio'] = get('air_gpio', source, int)
+    config['sensor_gpio'] = get('sensor_gpio', source, inone)
+    config['error_led_gpio'] = get('error_led_gpio', source, inone)
+    config['working_led_gpio'] = get('working_led_gpio', source, inone)
+    config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, inone)
+    config['motor_start_gpio'] = get('motor_start_gpio', source, inone)
+    config['motor_stop_gpio'] = get('motor_stop_gpio', source, inone)
+    config['water_gpio'] = get('water_gpio', source, inone)
+    config['air_gpio'] = get('air_gpio', source, inone)
 
     # time (in milliseconds) for software debouncing
     config['debounce_milliseconds'] = get('debounce_milliseconds',
@@ -194,7 +214,7 @@ def handle_machine_stop(routine):
         def check_emergency_stop():
             """check if the emergency stop button registered any events"""
             if GPIO.event_detected(interface.gpios['emergency_stop']):
-                raise exc.MachineStopped
+                raise lrp2c.MachineStopped
 
         try:
             # unfortunately we cannot abort the routine
@@ -202,9 +222,9 @@ def handle_machine_stop(routine):
             retval = routine(interface, *args, **kwargs)
             check_emergency_stop()
             return retval
-        except (exc.MachineStopped, KeyboardInterrupt):
+        except (lrp2c.MachineStopped, KeyboardInterrupt):
             interface.machine_control(OFF)
-            raise exc.MachineStopped
+            raise lrp2c.MachineStopped
     return wrapper
 
 
@@ -281,7 +301,7 @@ def interface_setup():
         try:
             settings = parse_configuration(section)
         except KeyError as exception:
-            raise exc.ConfigurationError(exception)
+            raise lrp2c.ConfigurationError(exception)
         interface = Interface(settings)
         INTERFACES[name.lower().strip()] = interface
 
@@ -333,9 +353,10 @@ class InterfaceBase:
         # initialize the interface with empty state
         default_operation_mode = self.config['default_operation_mode']
         default_row16_mode = self.config['default_row16_mode']
+        self.gpios = dict(working_led=None)
         self.status = dict(wedge_0005=15, wedge_0075=15, testing_mode=False,
-                           working=False, water=False, air=False,
-                           motor=False, pump=False, sensor=False,
+                           working=False, water=False, air=False, motor=False,
+                           pump=False, sensor=False, signals=[],
                            current_operation_mode=default_operation_mode,
                            current_row16_mode=default_row16_mode)
 
@@ -351,14 +372,14 @@ class InterfaceBase:
         if not mode:
             return
         elif self.status['working']:
-            raise exc.InterfaceBusy('Machine is working - cannot change mode')
+            raise lrp2c.InterfaceBusy('Machine working - cannot change mode')
         elif mode == 'reset':
             default_operation_mode = self.config['default_operation_mode']
             self.status['current_operation_mode'] = default_operation_mode
         elif mode in self.config['supported_operation_modes']:
             self.status['current_operation_mode'] = mode
         else:
-            raise exc.UnsupportedMode(mode)
+            raise lrp2c.UnsupportedMode(mode)
 
     @property
     def row16_mode(self):
@@ -368,24 +389,25 @@ class InterfaceBase:
     @row16_mode.setter
     def row16_mode(self, mode):
         """Set the row 16 addressing mode to a new value"""
-        if mode not in (None, 'reset', 'HMN', 'KMN', 'unit shift'):
-            return
-        if self.status['working']:
-            raise exc.InterfaceBusy('Machine is working - cannot change mode')
-        if mode == 'reset':
+        # prevent mode change when machine is running
+        if self.is_working:
+            raise lrp2c.InterfaceBusy('Machine working - cannot change mode')
+        if not mode:
+            # allow to turn it off in any case
+            self.status['current_row16_mode'] = False
+        elif mode == 'reset':
+            # restore to system default
             default_row16_mode = self.config['default_row16_mode']
             self.status['current_row16_mode'] = default_row16_mode
-        elif mode is None:
-            # allow to turn it off in any case
-            self.status['current_row16_mode'] = mode
-        elif self.operation_mode == 'casting':
+        elif mode not in (HMN, KMN, UNITSHIFT):
+            return
+        if self.is_casting:
             # allow only supported row 16 addressing modes
             if mode in self.config['supported_row16_modes']:
                 self.status['current_row16_mode'] = mode
             else:
-                raise exc.UnsupportedRow16Mode(mode)
-        elif mode in ('HMN', 'KMN', 'unit shift'):
-            # operation mode is testing (None) or punching
+                raise lrp2c.UnsupportedRow16Mode(mode)
+        else:
             self.status['current_row16_mode'] = mode
 
     @property
@@ -396,13 +418,55 @@ class InterfaceBase:
     @testing_mode.setter
     def testing_mode(self, state):
         """Set the testing mode on the interface"""
-        if self.status['working']:
-            raise exc.InterfaceBusy('Machine is working - cannot change mode')
+        if self.is_working:
+            raise lrp2c.InterfaceBusy('Machine working - cannot change mode')
         self.status['testing_mode'] = True if state else False
+
+    @property
+    def is_working(self):
+        """Get the machine working status"""
+        return self.status['working']
+
+    @is_working.setter
+    def is_working(self, state):
+        """Set the machine working state"""
+        working_status = True if state else False
+        if working_status:
+            turn_on(self.gpios['working_led'])
+        else:
+            turn_off(self.gpios['working_led'])
+        self.status['working'] = working_status
+
+    @property
+    def pump_working(self):
+        """Get the pump working status"""
+        return self.status['pump']
+
+    @pump_working.setter
+    def pump_working(self, state):
+        """Set the pump working state"""
+        self.status['pump'] = True if state else False
+
+    @property
+    def is_casting(self):
+        """Check if interface is in casting mode"""
+        return self.operation_mode == CASTING
+
+    @property
+    def sensor_state(self):
+        """Get the sensor state"""
+        return self.status['sensor']
+
+    @sensor_state.setter
+    def sensor_state(self, state):
+        """Update the sensor state"""
+        self.status['sensor'] = True if state else False
 
 
 class Interface(InterfaceBase):
     """Hardware control interface"""
+    output = None
+    gpios = None
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
                             error_led=GPIO.OUT, working_led=GPIO.OUT,
                             air=GPIO.OUT, water=GPIO.OUT,
@@ -410,12 +474,6 @@ class Interface(InterfaceBase):
 
     def __init__(self, config_dict):
         super().__init__(config_dict)
-        # GPIO definitions (after setup, these will be actual GPIO numbers)
-        self.gpios = dict()
-        # store the current signals
-        self.signals = []
-        # output driver (will be initialized in hardware_setup)
-        self.output = None
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
         # configure the hardware
@@ -430,20 +488,23 @@ class Interface(InterfaceBase):
         or modules supporting the hardware backends cannot be imported."""
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
-            sensor_state = get_state(sensor_gpio)
-            self.status['sensor'] = bool(sensor_state)
-            if sensor_state:
+            self.sensor_state = get_state(sensor_gpio)
+            if self.sensor_state:
                 self.meter_events.append(time.time())
 
         # set up the controls
+        self.gpios = dict()
         for gpio_name, direction in self.gpio_definitions.items():
             gpio_config_name = '{}_gpio'.format(gpio_name)
             gpio_number = config[gpio_config_name]
+            # skip 0 or None
+            if not gpio_number:
+                continue
             # configure the GPIO
             GPIO.setup(gpio_number, direction)
             self.gpios[gpio_name] = gpio_number
 
-        with suppress(RuntimeError):
+        with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
             GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.FALLING,
                                   bouncetime=config['debounce_milliseconds'])
@@ -455,6 +516,9 @@ class Interface(InterfaceBase):
         except RuntimeError:
             # event already registered
             GPIO.add_event_callback(self.gpios['sensor'], update_sensor)
+        except TypeError:
+            # sensor is not necessary for e.g. perforator interfaces
+            pass
 
         # output setup:
         try:
@@ -467,11 +531,11 @@ class Interface(InterfaceBase):
                 raise NameError
             self.output = output(config)
         except NameError:
-            raise exc.ConfigurationError('Unknown output: {}.'
-                                         .format(output_name))
+            raise lrp2c.ConfigurationError('Unknown output: {}.'
+                                           .format(output_name))
         except ImportError:
-            raise exc.ConfigurationError('Module not installed for {}'
-                                         .format(output_name))
+            raise lrp2c.ConfigurationError('Module not installed for {}'
+                                           .format(output_name))
 
     @handle_machine_stop
     def wait_for_sensor(self, new_state, timeout=None):
@@ -481,9 +545,9 @@ class Interface(InterfaceBase):
         raise MachineStopped."""
         start_time = time.time()
         timeout = timeout or self.config['sensor_timeout']
-        while self.status['sensor'] != new_state:
+        while self.sensor_state != new_state:
             if time.time() - start_time > timeout:
-                raise exc.MachineStopped
+                raise lrp2c.MachineStopped
             # wait 10ms to ease the load on the CPU
             time.sleep(0.01)
 
@@ -497,36 +561,40 @@ class Interface(InterfaceBase):
             """Start the machine.
             Casting requires that the machine is running before proceeding."""
             # don't let anyone else initialize an interface already initialized
-            if self.status['working']:
-                raise exc.InterfaceBusy
+            if self.is_working:
+                raise lrp2c.InterfaceBusy('Machine already started.')
 
             # reset the RPM counter
             self.meter_events.clear()
             # turn on the compressed air
-            self.air_control(ON)
+            with suppress(NotImplementedError):
+                self.air_control(ON)
             # make sure the machine is turning before proceeding
-            if self.operation_mode == 'casting' and not self.testing_mode:
+            if self.is_casting and not self.testing_mode:
                 # turn on the cooling water and motor
-                self.water_control(ON)
-                self.motor_control(ON)
+                with suppress(NotImplementedError):
+                    self.water_control(ON)
+                with suppress(NotImplementedError):
+                    self.motor_control(ON)
                 self.check_rotation()
             # properly initialized => mark it as working
-            turn_on(self.gpios['working_led'])
-            self.status['working'] = True
+            self.is_working = True
 
         def stop():
             """Stop the machine."""
-            if self.status['working']:
+            if self.is_working:
                 self.pump_control(OFF)
                 self.valves_control(OFF)
-                self.signals = []
-                if self.operation_mode == 'casting' and not self.testing_mode:
-                    self.motor_control(OFF)
-                    self.water_control(OFF)
-                self.air_control(OFF)
-                turn_off(self.gpios['working_led'])
+                self.status['signals'] = []
+                if self.is_casting and not self.testing_mode:
+                    with suppress(NotImplementedError):
+                        self.motor_control(OFF)
+                    with suppress(NotImplementedError):
+                        self.water_control(OFF)
+                with suppress(NotImplementedError):
+                    self.air_control(OFF)
                 # release the interface so others can claim it
-                self.status['working'] = False
+                self.is_working = False
             self.testing_mode = False
 
         if state is None:
@@ -535,7 +603,7 @@ class Interface(InterfaceBase):
             start()
         else:
             stop()
-        return self.status['working']
+        return self.is_working
 
     def rpm(self):
         """Speed meter for rpi2casterd"""
@@ -561,23 +629,22 @@ class Interface(InterfaceBase):
         status = dict()
         status.update(self.status)
         status.update(speed='{}rpm'.format(self.rpm()))
-        status.update(signals=self.signals)
         return status
 
     def check_pump(self):
         """Check if the pump is working or not"""
         def found(code):
             """check if code was found in a combination"""
-            return set(code).issubset(self.signals)
+            return set(code).issubset(self.status['signals'])
 
         # cache this to avoid double dictionary lookup for each check
         if found(['0075']) or found('NK'):
-            return True
+            return ON
         elif found(['0005']) or found('NJ'):
-            return False
+            return OFF
         else:
             # state does not change
-            return self.status['pump']
+            return self.pump_working
 
     def check_rotation(self, revolutions=3):
         """Check whether the machine is turning.
@@ -591,18 +658,19 @@ class Interface(InterfaceBase):
         """Check the wedge positions and return them."""
         def found(code):
             """check if code was found in a combination"""
-            return set(code).issubset(self.signals)
+            return set(code).issubset(signals)
 
+        signals = self.status['signals']
         # first check the pump status
         if found(['0075']) or found('NK'):
-            self.status['pump'] = True
+            self.pump_working = ON
         elif found(['0005']) or found('NJ'):
-            self.status['pump'] = False
+            self.pump_working = OFF
 
         # check 0075: find the earliest row number or default to 15
         if found(['0075']) or found('NK'):
             for pos in range(1, 15):
-                if str(pos) in self.signals:
+                if str(pos) in signals:
                     self.status['wedge_0075'] = pos
                     break
             else:
@@ -611,7 +679,7 @@ class Interface(InterfaceBase):
         # check 0005: find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
             for pos in range(1, 15):
-                if str(pos) in self.signals:
+                if str(pos) in signals:
                     self.status['wedge_0005'] = pos
                     break
             else:
@@ -623,12 +691,12 @@ class Interface(InterfaceBase):
         if state:
             self.output.valves_on(state)
             self.update_pump_and_wedges()
-            self.signals = ordered_signals(state)
+            self.status['signals'] = ordered_signals(state)
         elif state is None:
             pass
         else:
             self.output.valves_off()
-        return self.signals
+        return self.status['signals']
 
     @handle_machine_stop
     def motor_control(self, state=None):
@@ -640,19 +708,19 @@ class Interface(InterfaceBase):
             return self.status['motor']
         elif state:
             start_gpio = self.gpios['motor_start']
-            turn_on(start_gpio)
+            turn_on(start_gpio, raise_exception=True)
             time.sleep(0.5)
             turn_off(start_gpio)
-            self.status['motor'] = True
-            return True
+            self.status['motor'] = ON
+            return ON
         else:
             stop_gpio = self.gpios['motor_stop']
-            turn_on(stop_gpio)
+            turn_on(stop_gpio, raise_exception=True)
             time.sleep(0.5)
             turn_off(stop_gpio)
-            self.status['motor'] = False
+            self.status['motor'] = OFF
             self.meter_events.clear()
-            return False
+            return OFF
 
     def air_control(self, state=None):
         """Air supply control: master compressed air solenoid valve.
@@ -661,13 +729,13 @@ class Interface(InterfaceBase):
         if state is None:
             return self.status['air']
         elif state:
-            turn_on(self.gpios['air'])
-            self.status['air'] = True
-            return True
+            turn_on(self.gpios['air'], raise_exception=True)
+            self.status['air'] = ON
+            return ON
         else:
-            turn_off(self.gpios['air'])
-            self.status['air'] = False
-            return False
+            turn_off(self.gpios['air'], raise_exception=True)
+            self.status['air'] = OFF
+            return OFF
 
     def water_control(self, state=None):
         """Cooling water control:
@@ -676,13 +744,13 @@ class Interface(InterfaceBase):
         if state is None:
             return self.status['water']
         elif state:
-            turn_on(self.gpios['water'])
-            self.status['water'] = True
-            return True
+            turn_on(self.gpios['water'], raise_exception=True)
+            self.status['water'] = ON
+            return ON
         else:
-            turn_off(self.gpios['water'])
-            self.status['water'] = False
-            return False
+            turn_off(self.gpios['water'], raise_exception=True)
+            self.status['water'] = OFF
+            return OFF
 
     @handle_machine_stop
     def pump_control(self, state=None):
@@ -690,46 +758,38 @@ class Interface(InterfaceBase):
         Anything evaluating to True or False: start or stop the pump"""
         def start():
             """Start the pump."""
-            pump_start_code = ['N', 'K', 'S', '0075']
             # get the current 0075 wedge position and preserve it
-            wedge_position = self.status['wedge_0075']
-            pump_start_code.append(str(wedge_position))
-            # start the pump
-            self.send_signals(pump_start_code)
+            wedge_0075 = self.status['wedge_0075']
+            self.send_signals('NKS0075{}'.format(wedge_0075))
 
         def stop():
             """Stop the pump if it is working.
             This function will send the pump stop combination (NJS 0005) twice
             to make sure that the pump is turned off.
             In case of failure, repeat."""
-            if not self.status['pump']:
-                # that means the pump is not working, so why stop it?
+            if not self.pump_working:
                 return
 
-            # turn the emergency LED on, working LED off if needed
-            working_led = self.gpios['working_led']
-            working_led_state = get_state(working_led)
-            if working_led_state:
+            if self.is_working:
                 turn_off(self.gpios['working_led'])
             turn_on(self.gpios['error_led'])
-            pump_stop_code = ['N', 'J', 'S', '0005']
 
             # don't change the current 0005 wedge position
-            wedge_position = self.status['wedge_0005']
-            pump_stop_code.append(str(wedge_position))
+            wedge_0005 = self.status['wedge_0005']
+            stop_code = 'NJS0005{}'.format(wedge_0005)
 
             # use longer timeout
             timeout = self.config['pump_stop_timeout']
 
             # try as long as necessary
-            while self.status['pump']:
-                self.send_signals(pump_stop_code, timeout=timeout)
-                self.send_signals(pump_stop_code, timeout=timeout)
+            while self.pump_working:
+                self.send_signals(stop_code, timeout=timeout)
+                self.send_signals(stop_code, timeout=timeout)
 
             # finished; emergency LED off, working LED on if needed
             turn_off(self.gpios['error_led'])
-            if working_led_state:
-                turn_on(working_led)
+            if self.is_working:
+                turn_on(self.gpios['working_led'])
 
         if state is None:
             pass
@@ -737,7 +797,7 @@ class Interface(InterfaceBase):
             start()
         else:
             stop()
-        return self.status['pump']
+        return self.pump_working
 
     def justification(self, galley_trip=False,
                       wedge_0005=None, wedge_0075=None):
@@ -754,19 +814,6 @@ class Interface(InterfaceBase):
         the signals in a sequence preserving the pump status
         (if the pump was off, it will be off, and vice versa).
         """
-        def send_double(code):
-            """Send a double justification sequence i.e. 0075+0005"""
-            self.send_signals([*'NKJS', '0075', '0005', str(code)])
-
-        def send_0005():
-            """Send a 0005+code"""
-            self.send_signals([*'NJS', '0005', str(new_0005)])
-
-        def send_0075():
-            """Send a 0005+code"""
-            self.send_signals([*'NKS', '0075', str(new_0075)])
-
-        pump_working = self.status['pump']
         current_0005 = self.status['wedge_0005']
         current_0075 = self.status['wedge_0075']
         new_0005 = wedge_0005 or current_0005
@@ -774,12 +821,12 @@ class Interface(InterfaceBase):
 
         if galley_trip:
             # double justification: line out + set wedges
-            if pump_working:
-                send_double(new_0005)
-                send_0075()
+            if self.pump_working:
+                self.send_signals('NKJS 0075 0005 {}'.format(new_0005))
+                self.send_signals('NKS 0075 {}'.format(new_0075))
             else:
-                send_double(new_0075)
-                send_0005()
+                self.send_signals('NKJS 0075 0005{}'.format(new_0075))
+                self.send_signals('NJS 0005 {}'.format(new_0005))
 
         elif new_0005 == current_0005 and new_0075 == current_0075:
             # no need to do anything
@@ -787,148 +834,12 @@ class Interface(InterfaceBase):
 
         else:
             # single justification = no galley trip
-            if pump_working:
-                # if no change, skip
-                send_0005()
-                send_0075()
+            if self.pump_working:
+                self.send_signals('NJS 0005 {}'.format(new_0005))
+                self.send_signals('NKS 0075 {}'.format(new_0075))
             else:
-                send_0075()
-                send_0005()
-
-    def prepare_signals(self, input_signals):
-        """Prepare the incoming signals for casting, testing or punching."""
-        def is_present(value):
-            """Detect and dispatch known signals in source string"""
-            nonlocal source
-            string = str(value)
-            if string in source:
-                source = source.replace(string, '')
-                return True
-            else:
-                return False
-
-        def strip_16():
-            """Get rid of the "16" signal and replace it with "15"."""
-            if '16' in parsed_signals:
-                parsed_signals.discard('16')
-                parsed_signals.add('15')
-
-        def convert_hmn():
-            """HMN addressing mode - developed by Monotype, based on KMN.
-            Uncommon."""
-            # NI, NL, M -> add H -> HNI, HNL, HM
-            # H -> add N -> HN
-            # N -> add M -> MN
-            # O -> add HMN
-            # {ABCDEFGIJKL} -> add HM -> HM{ABCDEFGIJKL}
-
-            # earlier rows than 16 won't trigger the attachment -> early return
-            for i in range(1, 16):
-                if str(i) in parsed_signals:
-                    return
-
-            columns = 'NI', 'NL', 'H', 'M', 'N', 'O'
-            extras = 'H', 'H', 'N', 'H', 'M', 'HMN'
-            if '16' in parsed_signals:
-                parsed_signals.discard('16')
-                for column, extra in zip(columns, extras):
-                    if parsed_signals.issuperset(column):
-                        parsed_signals.update(extra)
-                        return
-                parsed_signals.update('HM')
-
-        def convert_kmn():
-            """KMN addressing mode - invented by a British printshop.
-            Very uncommon."""
-            # NI, NL, M -> add K -> KNI, KNL, KM
-            # K -> add N -> KN
-            # N -> add M -> MN
-            # O -> add KMN
-            # {ABCDEFGHIJL} -> add KM -> KM{ABCDEFGHIJL}
-
-            # earlier rows than 16 won't trigger the attachment -> early return
-            for i in range(1, 16):
-                if str(i) in parsed_signals:
-                    return
-
-            columns = 'NI', 'NL', 'K', 'M', 'N', 'O'
-            extras = 'K', 'K', 'N', 'K', 'M', 'HMN'
-            if '16' in parsed_signals:
-                parsed_signals.discard('16')
-                for column, extra in zip(columns, extras):
-                    if parsed_signals.issuperset(column):
-                        parsed_signals.update(extra)
-                        return
-                parsed_signals.update('KM')
-
-        def convert_unitshift():
-            """Unit-shift addressing mode - rather common,
-            designed by Monotype and introduced in 1963"""
-            if 'D' in parsed_signals:
-                # when the attachment is on, the D signal is routed
-                # to unit-shift activation piston instead of column D air pin
-                # this pin is activated by EF combination instead
-                parsed_signals.discard('D')
-                parsed_signals.update('EF')
-            if '16' in parsed_signals:
-                # use unit shift if the row signal is 16
-                # make it possible to shift the diecase on earlier rows
-                parsed_signals.update('D')
-                parsed_signals.discard('16')
-
-        def convert_o15():
-            """Change O and 15 to a combined O+15 signal"""
-            for sig in ('O', '15'):
-                if sig in parsed_signals:
-                    parsed_signals.discard(sig)
-                    parsed_signals.add('O15')
-
-        def strip_o15():
-            """For casting, don't use O+15"""
-            parsed_signals.discard('O15')
-
-        def add_missing_o15():
-            """If length of signals is less than 2, add an O+15,
-            so that when punching, the ribbon will be advanced properly."""
-            convert_o15()
-            if len(parsed_signals) < 2:
-                # need O15 to advance the ribbon
-                parsed_signals.add('O15')
-            elif len(parsed_signals) > 2:
-                # no need for an additional O15
-                parsed_signals.discard('O15')
-
-        try:
-            source = input_signals.upper()
-        except AttributeError:
-            source = ''.join(str(x) for x in input_signals).upper()
-
-        useful = ['0005', '0075', *(str(x) for x in range(16, 0, -1)),
-                  *'ABCDEFGHIJKLMNOS']
-        parsed_signals = {s for s in useful if is_present(s)}
-
-        # based on row 16 addressing mode,
-        # decide which signal conversion should be applied
-        if self.row16_mode == 'HMN':
-            convert_hmn()
-        elif self.row16_mode == 'KMN':
-            convert_kmn()
-        elif self.row16_mode == 'unit shift':
-            convert_unitshift()
-        else:
-            strip_16()
-        # based on the operation mode, strip, convert or add O/15 signals
-        # casting: strip (as it's not used),
-        # punching: add if less than 2 signals,
-        # testing: convert O or 15 to O+15 which will be sent
-        if self.testing_mode:
-            convert_o15()
-        elif self.operation_mode == 'punching':
-            add_missing_o15()
-        else:
-            strip_o15()
-        # all ready for sending
-        return parsed_signals
+                self.send_signals('NKS 0075 {}'.format(new_0075))
+                self.send_signals('NJS 0005 {}'.format(new_0005))
 
     def send_signals(self, input_signals, timeout=None):
         """Send the signals to the caster/perforator.
@@ -940,14 +851,15 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        signals = self.prepare_signals(input_signals)
+        signals = lrp2c.parse_signals(input_signals, self.operation_mode,
+                                      self.row16_mode, self.testing_mode)
         if not signals:
             self.valves_control(OFF)
         elif self.testing_mode:
             self.test(signals)
-        elif self.operation_mode == 'casting':
+        elif self.is_casting:
             self.cast(signals, timeout=timeout)
-        elif self.operation_mode == 'punching':
+        else:
             self.punch(signals)
 
     def cast(self, codes, timeout=None):
@@ -956,8 +868,8 @@ class Interface(InterfaceBase):
         Wait for sensor to go ON, turn on the valves,
         wait for sensor to go OFF, turn off the valves.
         """
-        if not self.status['working']:
-            raise exc.InterfaceNotStarted
+        if not self.is_working:
+            raise lrp2c.InterfaceNotStarted
 
         # allow the use of a custom timeout
         timeout = timeout or self.config['sensor_timeout']
@@ -970,8 +882,8 @@ class Interface(InterfaceBase):
     def test(self, codes):
         """Turn off any previous combination, then send signals.
         """
-        if not self.status['working']:
-            self.machine_control(True)
+        if not self.is_working:
+            self.machine_control(ON)
 
         # change the active combination
         self.valves_control(OFF)
@@ -984,8 +896,8 @@ class Interface(InterfaceBase):
         then turn off the valves and wait for them to go down
         ("punching_off_time").
         """
-        if not self.status['working']:
-            self.machine_control(True)
+        if not self.is_working:
+            self.machine_control(ON)
 
         # timer-driven operation
         self.valves_control(codes)

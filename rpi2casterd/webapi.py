@@ -6,7 +6,7 @@ from functools import wraps
 from flask import Flask, abort, jsonify
 from flask.globals import request
 
-from rpi2casterd import exceptions as exc
+import librpi2caster
 
 # method names for convenience
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
@@ -45,11 +45,11 @@ def handle_request(routine):
             abort(404)
         except NotImplementedError:
             abort(501)
-        except (exc.InterfaceNotStarted,
-                exc.InterfaceBusy,
-                exc.MachineStopped,
-                exc.UnsupportedMode,
-                exc.UnsupportedRow16Mode) as error:
+        except (librpi2caster.InterfaceNotStarted,
+                librpi2caster.InterfaceBusy,
+                librpi2caster.MachineStopped,
+                librpi2caster.UnsupportedMode,
+                librpi2caster.UnsupportedRow16Mode) as error:
             return failure(error)
     return wrapper
 
