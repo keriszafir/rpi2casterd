@@ -838,7 +838,7 @@ class Interface(InterfaceBase):
                 self.send_signals('NKS 0075 {}'.format(new_0075))
                 self.send_signals('NJS 0005 {}'.format(new_0005))
 
-    def send_signals(self, signals, repetitions=1, timeout=None):
+    def send_signals(self, signals, repetitions=None, timeout=None):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -848,17 +848,17 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        codes = librpi2caster.parse_signals(signals, self.operation_mode,
-                                            self.row16_mode, self.testing_mode)
         if not signals:
             # this tells the interface to turn off all the valves
             self.valves_control(OFF)
-        else:
-            cast = partial(self.cast, timeout=timeout)
-            send_routine = (self.test if self.testing_mode
-                            else cast if self.is_casting else self.punch)
-            for _ in range(repetitions):
-                send_routine(codes)
+            return
+        codes = librpi2caster.parse_signals(signals, self.operation_mode,
+                                            self.row16_mode, self.testing_mode)
+        cast = partial(self.cast, timeout=timeout)
+        send_routine = (self.test if self.testing_mode
+                        else cast if self.is_casting else self.punch)
+        for _ in range(repetitions or 1):
+            send_routine(codes)
 
     def cast(self, codes, timeout=None):
         """Monotype composition caster.

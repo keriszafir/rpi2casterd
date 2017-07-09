@@ -161,7 +161,7 @@ def signals(interface):
     elif request.method in (POST, PUT):
         request_data = request.get_json() or {}
         codes = request_data.get('signals') or []
-        number = request_data.get('number') or request_data.get('times') or 1
+        number = request_data.get('repeat')
         timeout = request_data.get('timeout')
         interface.send_signals(codes, number, timeout)
     elif request.method == DELETE:
