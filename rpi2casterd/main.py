@@ -31,9 +31,9 @@ DEFAULTS = dict(name='Monotype composition caster',
                 punching_on_time='0.2', punching_off_time='0.3',
                 debounce_milliseconds='25',
                 ready_led_gpio='18', sensor_gpio='17',
-                working_led_gpio='25', error_led_gpio='26',
-                air_gpio='19', water_gpio='13', emergency_stop_gpio='22',
-                motor_start_gpio='5', motor_stop_gpio='6',
+                working_led_gpio='', error_led_gpio='',
+                air_gpio='', water_gpio='', emergency_stop_gpio='',
+                motor_start_gpio='', motor_stop_gpio='',
                 i2c_bus='1', mcp0_address='0x20', mcp1_address='0x21',
                 valve1='N,M,L,K,J,I,H,G',
                 valve2='F,S,E,D,0075,C,B,A',
@@ -108,31 +108,36 @@ def teardown():
 def get(parameter, source, convert):
     """Gets a value from a specified source for a given parameter,
     converts it to a desired data type"""
-    return convert(source[parameter])
+    def address_and_port(input_string):
+        """Get an IP or DNS address and a port"""
+        try:
+            address, _port = input_string.split(':')
+            port = int(_port)
+        except ValueError:
+            address = input_string
+            port = 23017
+        return address, port
 
-
-def parse_configuration(source):
-    """Get the interface parameters from a config parser section"""
-    def signals(input_string):
+    def list_of_signals(input_string):
         """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
         Allow only known defined signals."""
         raw = [x.strip().upper() for x in input_string.split(',')]
         return [x for x in raw if x in librpi2caster.OUTPUT_SIGNALS]
 
-    def strings(input_string):
+    def list_of_strings(input_string):
         """Convert 'abc , def, 012' -> ['abc', 'def', '012']
         (no case change; strip whitespace)."""
         return [x.strip() for x in input_string.split(',')]
 
-    def lcstring(input_string):
+    def lowercase_string(input_string):
         """Return a lowercase string stripped of all whitespace"""
         return input_string.strip().lower()
 
-    def anyint(input_string):
+    def any_integer(input_string):
         """Convert a decimal, octal, binary or hexadecimal string to integer"""
-        return int(lcstring(input_string), 0)
+        return int(lowercase_string(input_string), 0)
 
-    def inone(input_string):
+    def int_or_none(input_string):
         """Return integer or None"""
         stripped = input_string.strip()
         try:
@@ -140,18 +145,36 @@ def parse_configuration(source):
         except ValueError:
             return None
 
+    def command(input_string):
+        """Operating system command: string -> accepted by subprocess.run"""
+        chunks = input_string.split(' ')
+        return [x.strip() for x in chunks]
+
+    converters = dict(anyint=any_integer, address=address_and_port,
+                      inone=int_or_none, signals=list_of_signals,
+                      lcstring=lowercase_string, strings=list_of_strings,
+                      command=command)
+    routine = converters.get(convert, convert)
+    # get the string from the source configuration
+    source_value = source[parameter]
+    # convert and return
+    return routine(source_value)
+
+
+def parse_configuration(source):
+    """Get the interface parameters from a config parser section"""
     config = OrderedDict()
     # caster name
     config['name'] = get('name', source, str)
     # supported operation and row 16 addressing modes
-    modes = get('supported_operation_modes', source, strings)
-    row16_modes = get('supported_row16_modes', source, strings)
+    modes = get('supported_operation_modes', source, 'strings')
+    row16_modes = get('supported_row16_modes', source, 'strings')
     config['supported_operation_modes'] = modes
     config['supported_row16_modes'] = row16_modes
     config['default_operation_mode'] = modes[0]
 
     # determine the output driver
-    config['output_driver'] = get('output_driver', source, lcstring)
+    config['output_driver'] = get('output_driver', source, 'lcstring')
 
     # get timings
     config['startup_timeout'] = get('startup_timeout', source, float)
@@ -161,27 +184,27 @@ def parse_configuration(source):
     config['punching_off_time'] = get('punching_off_time', source, float)
 
     # interface settings: control GPIOs
-    config['sensor_gpio'] = get('sensor_gpio', source, inone)
-    config['error_led_gpio'] = get('error_led_gpio', source, inone)
-    config['working_led_gpio'] = get('working_led_gpio', source, inone)
-    config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, inone)
-    config['motor_start_gpio'] = get('motor_start_gpio', source, inone)
-    config['motor_stop_gpio'] = get('motor_stop_gpio', source, inone)
-    config['water_gpio'] = get('water_gpio', source, inone)
-    config['air_gpio'] = get('air_gpio', source, inone)
+    config['sensor_gpio'] = get('sensor_gpio', source, 'inone')
+    config['error_led_gpio'] = get('error_led_gpio', source, 'inone')
+    config['working_led_gpio'] = get('working_led_gpio', source, 'inone')
+    config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, 'inone')
+    config['motor_start_gpio'] = get('motor_start_gpio', source, 'inone')
+    config['motor_stop_gpio'] = get('motor_stop_gpio', source, 'inone')
+    config['water_gpio'] = get('water_gpio', source, 'inone')
+    config['air_gpio'] = get('air_gpio', source, 'inone')
 
     # time (in milliseconds) for software debouncing
-    config['debounce_milliseconds'] = get('debounce_milliseconds',
-                                          source, int)
+    debounce_milliseconds = get('debounce_milliseconds', source, int)
+    config['debounce_milliseconds'] = debounce_milliseconds
 
     # interface settings: output
-    config['i2c_bus'] = get('i2c_bus', source, anyint)
-    config['mcp0_address'] = get('mcp0_address', source, anyint)
-    config['mcp1_address'] = get('mcp1_address', source, anyint)
-    config['signal_mappings'] = dict(valve1=get('valve1', source, signals),
-                                     valve2=get('valve2', source, signals),
-                                     valve3=get('valve3', source, signals),
-                                     valve4=get('valve4', source, signals))
+    config['i2c_bus'] = get('i2c_bus', source, 'anyint')
+    config['mcp0_address'] = get('mcp0_address', source, 'anyint')
+    config['mcp1_address'] = get('mcp1_address', source, 'anyint')
+    config['signal_mappings'] = dict(valve1=get('valve1', source, 'signals'),
+                                     valve2=get('valve2', source, 'signals'),
+                                     valve3=get('valve3', source, 'signals'),
+                                     valve4=get('valve4', source, 'signals'))
 
     # configuration ready to ship
     return config
@@ -212,62 +235,54 @@ def handle_machine_stop(routine):
 
 def daemon_setup():
     """Configure the "ready" LED and shutdown/reboot buttons"""
-    def command(input_string):
-        """Operating system command: string -> accepted by subprocess.run"""
-        chunks = input_string.split(' ')
-        return [x.strip() for x in chunks]
-
     def shutdown(*_):
         """Shut the system down"""
         print('Shutdown button pressed. Hold down for 2s to shut down...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not get_state(shutdown_gpio):
+        if not get_state(shdn):
             print('Shutting down...')
             blink('ready')
-            cmd = config.get('shutdown_command')
-            subprocess.run(command(cmd))
+            cmd = get('shutdown_command', CFG.defaults(), 'command')
+            subprocess.run(cmd)
 
     def reboot(*_):
         """Restart the system"""
         print('Reboot button pressed. Hold down for 2s to reboot...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not get_state(reboot_gpio):
+        if not get_state(reset):
             print('Rebooting...')
             blink('ready')
-            cmd = config.get('reboot_command')
-            subprocess.run(command(cmd))
+            cmd = get('reboot_command', CFG.defaults(), 'command')
+            subprocess.run(cmd)
 
     def signal_handler(*_):
         """Exit gracefully if SIGINT or SIGTERM received"""
         raise KeyboardInterrupt
 
-    config = CFG.defaults()
-    # set the LED up
-    ready_led_gpio = get('ready_led_gpio', config, int)
-    GPIO.setup(ready_led_gpio, GPIO.OUT)
-    LEDS['ready'] = ready_led_gpio
+    def setup_gpio(name, direction, pull=None, callbk=None, edge=GPIO.FALLING):
+        """Set up a GPIO input/output"""
+        gpio = get(name, CFG.defaults(), 'inone')
+        if gpio:
+            # set up an input or output
+            if pull:
+                GPIO.setup(gpio, direction, pull_up_down=pull)
+            else:
+                GPIO.setup(gpio, direction)
 
-    # set the buttons up
-    shutdown_gpio = get('shutdown_gpio', config, int)
-    reboot_gpio = get('reboot_gpio', config, int)
-    GPIO.setup(shutdown_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    GPIO.setup(reboot_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            # try registering a callback function on interrupt
+            if callbk:
+                try:
+                    GPIO.add_event_detect(gpio, edge, callbk, bouncetime=50)
+                except RuntimeError:
+                    GPIO.add_event_callback(gpio, callbk)
+        return gpio
 
-    # register callbacks for shutdown and reboot
-    # if some callback was already registered, hook up another function
-    try:
-        GPIO.add_event_detect(shutdown_gpio, GPIO.FALLING,
-                              callback=shutdown, bouncetime=50)
-    except RuntimeError:
-        GPIO.add_event_callback(shutdown_gpio, shutdown)
-    try:
-        GPIO.add_event_detect(reboot_gpio, GPIO.FALLING,
-                              callback=reboot, bouncetime=50)
-    except RuntimeError:
-        GPIO.add_event_callback(reboot_gpio, reboot)
-
+    # set up the ready LED and shutdown/reboot buttons, if possible
+    LEDS['ready'] = setup_gpio('ready_led_gpio', GPIO.OUT)
+    shdn = setup_gpio('shutdown_gpio', GPIO.IN, GPIO.PUD_UP, shutdown)
+    reset = setup_gpio('reboot_gpio', GPIO.IN, GPIO.PUD_UP, reboot)
     # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -290,20 +305,10 @@ def interface_setup():
 
 def main():
     """Starts the application"""
-    def address_and_port(input_string):
-        """Get an IP or DNS address and a port"""
-        try:
-            address, _port = input_string.split(':')
-            port = int(_port)
-        except ValueError:
-            address = input_string
-            port = 23017
-        return address, port
-
     try:
         # get the listen address and port
         config = CFG.defaults()
-        address, port = get('listen_address', config, address_and_port)
+        address, port = get('listen_address', config, 'address')
         # initialize hardware
         daemon_setup()
         interface_setup()
