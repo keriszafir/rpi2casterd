@@ -8,14 +8,14 @@ using selectable backend libraries for greater configurability.
 """
 from collections import deque, OrderedDict
 from contextlib import suppress
-from functools import wraps
+from functools import partial, wraps
 import configparser
 import signal
 import subprocess
 import time
 import RPi.GPIO as GPIO
 
-import librpi2caster as lrp2c
+import librpi2caster
 from librpi2caster import ON, OFF, HMN, KMN, UNITSHIFT, CASTING, PUNCHING
 from rpi2casterd.webapi import INTERFACES, APP
 
@@ -152,7 +152,6 @@ def parse_configuration(source):
     config['supported_operation_modes'] = modes
     config['supported_row16_modes'] = row16_modes
     config['default_operation_mode'] = modes[0]
-    config['default_row16_mode'] = OFF
 
     # determine the output driver
     config['output_driver'] = get('output_driver', source, lcstring)
@@ -191,20 +190,6 @@ def parse_configuration(source):
     return config
 
 
-def ordered_signals(source):
-    """Returns a list of arranged signals ready for display"""
-    arranged = deque(s for s in OUTPUT_SIGNALS if s in source)
-    # put NI, NL, NK, NJ, NKJ etc. at the front
-    if 'N' in arranged:
-        for other in 'JKLI':
-            if other in source:
-                arranged.remove('N')
-                arranged.remove(other)
-                arranged.appendleft(other)
-                arranged.appendleft('N')
-    return list(arranged)
-
-
 def handle_machine_stop(routine):
     """Ensure that when MachineStopped occurs, the interface will run
     its stop() method."""
@@ -214,7 +199,7 @@ def handle_machine_stop(routine):
         def check_emergency_stop():
             """check if the emergency stop button registered any events"""
             if GPIO.event_detected(interface.gpios['emergency_stop']):
-                raise lrp2c.MachineStopped
+                raise librpi2caster.MachineStopped
 
         try:
             # unfortunately we cannot abort the routine
@@ -222,9 +207,9 @@ def handle_machine_stop(routine):
             retval = routine(interface, *args, **kwargs)
             check_emergency_stop()
             return retval
-        except (lrp2c.MachineStopped, KeyboardInterrupt):
+        except (librpi2caster.MachineStopped, KeyboardInterrupt):
             interface.machine_control(OFF)
-            raise lrp2c.MachineStopped
+            raise librpi2caster.MachineStopped
     return wrapper
 
 
@@ -301,7 +286,7 @@ def interface_setup():
         try:
             settings = parse_configuration(section)
         except KeyError as exception:
-            raise lrp2c.ConfigurationError(exception)
+            raise librpi2caster.ConfigurationError(exception)
         interface = Interface(settings)
         INTERFACES[name.lower().strip()] = interface
 
@@ -352,34 +337,36 @@ class InterfaceBase:
         self.config = config_dict
         # initialize the interface with empty state
         default_operation_mode = self.config['default_operation_mode']
-        default_row16_mode = self.config['default_row16_mode']
+        # data structure to count photocell ON events for rpm meter
+        self.meter_events = deque(maxlen=3)
+        # temporary GPIO dict (can be populated in hardware_setup)
         self.gpios = dict(working_led=None)
-        self.status = dict(wedge_0005=15, wedge_0075=15, testing_mode=False,
-                           working=False, water=False, air=False, motor=False,
-                           pump=False, sensor=False, signals=[],
+        # initialize machine state
+        self.status = dict(wedge_0005=15, wedge_0075=15, testing_mode=OFF,
+                           working=OFF, water=OFF, air=OFF, motor=OFF,
+                           pump=OFF, sensor=OFF, signals=[],
                            current_operation_mode=default_operation_mode,
-                           current_row16_mode=default_row16_mode)
+                           current_row16_mode=OFF)
+
+    def __str__(self):
+        return self.config['name']
 
     @property
     def operation_mode(self):
         """Get the current operation mode"""
-        default_mode = self.config['default_operation_mode']
-        return self.status.get('current_operation_mode', default_mode)
+        return self.status['current_operation_mode']
 
     @operation_mode.setter
     def operation_mode(self, mode):
         """Set the operation mode to a new value"""
+        self.check_if_busy()
         if not mode:
-            return
-        elif self.status['working']:
-            raise lrp2c.InterfaceBusy('Machine working - cannot change mode')
-        elif mode == 'reset':
             default_operation_mode = self.config['default_operation_mode']
             self.status['current_operation_mode'] = default_operation_mode
         elif mode in self.config['supported_operation_modes']:
             self.status['current_operation_mode'] = mode
         else:
-            raise lrp2c.UnsupportedMode(mode)
+            raise librpi2caster.UnsupportedMode(mode)
 
     @property
     def row16_mode(self):
@@ -390,15 +377,10 @@ class InterfaceBase:
     def row16_mode(self, mode):
         """Set the row 16 addressing mode to a new value"""
         # prevent mode change when machine is running
-        if self.is_working:
-            raise lrp2c.InterfaceBusy('Machine working - cannot change mode')
+        self.check_if_busy()
         if not mode:
             # allow to turn it off in any case
-            self.status['current_row16_mode'] = False
-        elif mode == 'reset':
-            # restore to system default
-            default_row16_mode = self.config['default_row16_mode']
-            self.status['current_row16_mode'] = default_row16_mode
+            self.status['current_row16_mode'] = OFF
         elif mode not in (HMN, KMN, UNITSHIFT):
             return
         if self.is_casting:
@@ -406,7 +388,7 @@ class InterfaceBase:
             if mode in self.config['supported_row16_modes']:
                 self.status['current_row16_mode'] = mode
             else:
-                raise lrp2c.UnsupportedRow16Mode(mode)
+                raise librpi2caster.UnsupportedRow16Mode(mode)
         else:
             self.status['current_row16_mode'] = mode
 
@@ -418,8 +400,7 @@ class InterfaceBase:
     @testing_mode.setter
     def testing_mode(self, state):
         """Set the testing mode on the interface"""
-        if self.is_working:
-            raise lrp2c.InterfaceBusy('Machine working - cannot change mode')
+        self.check_if_busy()
         self.status['testing_mode'] = True if state else False
 
     @property
@@ -453,6 +434,25 @@ class InterfaceBase:
         return self.operation_mode == CASTING
 
     @property
+    def signals(self):
+        """Get the current signals."""
+        return self.status['signals']
+
+    @signals.setter
+    def signals(self, source):
+        """Set the current signals."""
+        arranged = deque(s for s in OUTPUT_SIGNALS if s in source)
+        # put NI, NL, NK, NJ, NKJ etc. at the front
+        if 'N' in arranged:
+            for other in 'JKLI':
+                if other in source:
+                    arranged.remove('N')
+                    arranged.remove(other)
+                    arranged.appendleft(other)
+                    arranged.appendleft('N')
+        self.status['signals'] = list(arranged)
+
+    @property
     def sensor_state(self):
         """Get the sensor state"""
         return self.status['sensor']
@@ -461,6 +461,106 @@ class InterfaceBase:
     def sensor_state(self, state):
         """Update the sensor state"""
         self.status['sensor'] = True if state else False
+
+    @property
+    def current_status(self):
+        """Get the most current status."""
+        status = dict()
+        status.update(self.status)
+        status.update(speed='{}rpm'.format(self.rpm()))
+        return status
+
+    @handle_machine_stop
+    def wait_for_sensor(self, new_state, timeout=None):
+        """Wait until the machine cycle sensor changes its state
+        to the desired value (True or False).
+        If no state change is registered in the given time,
+        raise MachineStopped."""
+        start_time = time.time()
+        timeout = timeout or self.config['sensor_timeout']
+        while self.sensor_state != new_state:
+            if time.time() - start_time > timeout:
+                raise librpi2caster.MachineStopped
+            # wait 10ms to ease the load on the CPU
+            time.sleep(0.01)
+
+    def rpm(self):
+        """Speed meter for rpi2casterd"""
+        events = self.meter_events
+        sensor_timeout = self.config['sensor_timeout']
+        try:
+            # how long in seconds is it from the first to last event?
+            duration = events[-1] - events[0]
+            if not duration or duration > sensor_timeout:
+                # single event or waited too long
+                return 0
+            # 3 timestamps = 2 rotations
+            per_second = (len(events) - 1) / duration
+            rpm = round(per_second * 60, 2)
+            return rpm
+        except IndexError:
+            # not enough events / measurement points
+            return 0
+
+    def check_if_busy(self):
+        """Check if the interface is already working. If so,
+        raise InterfaceBusy."""
+        if self.is_working:
+            message = 'Cannot do that - the machine is already working.'
+            raise librpi2caster.InterfaceBusy(message)
+
+    def check_pump(self):
+        """Check if the pump is working or not"""
+        def found(code):
+            """check if code was found in a combination"""
+            return set(code).issubset(self.signals)
+
+        # cache this to avoid double dictionary lookup for each check
+        if found(['0075']) or found('NK'):
+            return ON
+        elif found(['0005']) or found('NJ'):
+            return OFF
+        else:
+            # state does not change
+            return self.pump_working
+
+    def check_rotation(self, revolutions=3):
+        """Check whether the machine is turning.
+        The machine must typically go 3 revolutions of the main shaft."""
+        timeout = self.config['startup_timeout']
+        for _ in range(revolutions, 0, -1):
+            self.wait_for_sensor(ON, timeout=timeout)
+            self.wait_for_sensor(OFF, timeout=timeout)
+
+    def update_pump_and_wedges(self):
+        """Check the wedge positions and return them."""
+        def found(code):
+            """check if code was found in a combination"""
+            return set(code).issubset(self.signals)
+
+        # first check the pump status
+        if found(['0075']) or found('NK'):
+            self.pump_working = ON
+        elif found(['0005']) or found('NJ'):
+            self.pump_working = OFF
+
+        # check 0075: find the earliest row number or default to 15
+        if found(['0075']) or found('NK'):
+            for pos in range(1, 15):
+                if str(pos) in self.signals:
+                    self.status['wedge_0075'] = pos
+                    break
+            else:
+                self.status['wedge_0075'] = 15
+
+        # check 0005: find the earliest row number or default to 15
+        if found(['0005']) or found('NJ'):
+            for pos in range(1, 15):
+                if str(pos) in self.signals:
+                    self.status['wedge_0005'] = pos
+                    break
+            else:
+                self.status['wedge_0005'] = 15
 
 
 class Interface(InterfaceBase):
@@ -474,13 +574,7 @@ class Interface(InterfaceBase):
 
     def __init__(self, config_dict):
         super().__init__(config_dict)
-        # data structure to count photocell ON events for rpm meter
-        self.meter_events = deque(maxlen=3)
-        # configure the hardware
         self.hardware_setup(self.config)
-
-    def __str__(self):
-        return self.config['name']
 
     def hardware_setup(self, config):
         """Configure the inputs and outputs.
@@ -531,25 +625,11 @@ class Interface(InterfaceBase):
                 raise NameError
             self.output = output(config)
         except NameError:
-            raise lrp2c.ConfigurationError('Unknown output: {}.'
-                                           .format(output_name))
+            raise librpi2caster.ConfigurationError('Unknown output: {}.'
+                                                   .format(output_name))
         except ImportError:
-            raise lrp2c.ConfigurationError('Module not installed for {}'
-                                           .format(output_name))
-
-    @handle_machine_stop
-    def wait_for_sensor(self, new_state, timeout=None):
-        """Wait until the machine cycle sensor changes its state
-        to the desired value (True or False).
-        If no state change is registered in the given time,
-        raise MachineStopped."""
-        start_time = time.time()
-        timeout = timeout or self.config['sensor_timeout']
-        while self.sensor_state != new_state:
-            if time.time() - start_time > timeout:
-                raise lrp2c.MachineStopped
-            # wait 10ms to ease the load on the CPU
-            time.sleep(0.01)
+            raise librpi2caster.ConfigurationError('{}: module not installed'
+                                                   .format(output_name))
 
     def machine_control(self, state=None):
         """Machine and interface control.
@@ -560,10 +640,7 @@ class Interface(InterfaceBase):
         def start():
             """Start the machine.
             Casting requires that the machine is running before proceeding."""
-            # don't let anyone else initialize an interface already initialized
-            if self.is_working:
-                raise lrp2c.InterfaceBusy('Machine already started.')
-
+            self.check_if_busy()
             # reset the RPM counter
             self.meter_events.clear()
             # turn on the compressed air
@@ -585,7 +662,7 @@ class Interface(InterfaceBase):
             if self.is_working:
                 self.pump_control(OFF)
                 self.valves_control(OFF)
-                self.status['signals'] = []
+                self.signals = []
                 if self.is_casting and not self.testing_mode:
                     with suppress(NotImplementedError):
                         self.motor_control(OFF)
@@ -605,98 +682,18 @@ class Interface(InterfaceBase):
             stop()
         return self.is_working
 
-    def rpm(self):
-        """Speed meter for rpi2casterd"""
-        events = self.meter_events
-        sensor_timeout = self.config['sensor_timeout']
-        try:
-            # how long in seconds is it from the first to last event?
-            duration = events[-1] - events[0]
-            if not duration or duration > sensor_timeout:
-                # single event or waited too long
-                return 0
-            # 3 timestamps = 2 rotations
-            per_second = (len(events) - 1) / duration
-            rpm = round(per_second * 60, 2)
-            return rpm
-        except IndexError:
-            # not enough events / measurement points
-            return 0
-
-    @property
-    def current_status(self):
-        """Get the most current status."""
-        status = dict()
-        status.update(self.status)
-        status.update(speed='{}rpm'.format(self.rpm()))
-        return status
-
-    def check_pump(self):
-        """Check if the pump is working or not"""
-        def found(code):
-            """check if code was found in a combination"""
-            return set(code).issubset(self.status['signals'])
-
-        # cache this to avoid double dictionary lookup for each check
-        if found(['0075']) or found('NK'):
-            return ON
-        elif found(['0005']) or found('NJ'):
-            return OFF
-        else:
-            # state does not change
-            return self.pump_working
-
-    def check_rotation(self, revolutions=3):
-        """Check whether the machine is turning.
-        The machine must typically go 3 revolutions of the main shaft."""
-        timeout = self.config['startup_timeout']
-        for _ in range(revolutions, 0, -1):
-            self.wait_for_sensor(ON, timeout=timeout)
-            self.wait_for_sensor(OFF, timeout=timeout)
-
-    def update_pump_and_wedges(self):
-        """Check the wedge positions and return them."""
-        def found(code):
-            """check if code was found in a combination"""
-            return set(code).issubset(signals)
-
-        signals = self.status['signals']
-        # first check the pump status
-        if found(['0075']) or found('NK'):
-            self.pump_working = ON
-        elif found(['0005']) or found('NJ'):
-            self.pump_working = OFF
-
-        # check 0075: find the earliest row number or default to 15
-        if found(['0075']) or found('NK'):
-            for pos in range(1, 15):
-                if str(pos) in signals:
-                    self.status['wedge_0075'] = pos
-                    break
-            else:
-                self.status['wedge_0075'] = 15
-
-        # check 0005: find the earliest row number or default to 15
-        if found(['0005']) or found('NJ'):
-            for pos in range(1, 15):
-                if str(pos) in signals:
-                    self.status['wedge_0005'] = pos
-                    break
-            else:
-                self.status['wedge_0005'] = 15
-
     def valves_control(self, state):
         """Turn valves on or off, check valve status.
         Accepts signals (turn on), False (turn off) or None (get the status)"""
         if state:
             self.output.valves_on(state)
             self.update_pump_and_wedges()
-            self.status['signals'] = ordered_signals(state)
+            self.signals = state
         elif state is None:
             pass
         else:
             self.output.valves_off()
-        return self.status['signals']
+        return self.signals
 
     @handle_machine_stop
     def motor_control(self, state=None):
@@ -841,7 +838,7 @@ class Interface(InterfaceBase):
                 self.send_signals('NKS 0075 {}'.format(new_0075))
                 self.send_signals('NJS 0005 {}'.format(new_0005))
 
-    def send_signals(self, input_signals, timeout=None):
+    def send_signals(self, signals, repetitions=1, timeout=None):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -851,16 +848,17 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        signals = lrp2c.parse_signals(input_signals, self.operation_mode,
-                                      self.row16_mode, self.testing_mode)
+        codes = librpi2caster.parse_signals(signals, self.operation_mode,
+                                            self.row16_mode, self.testing_mode)
         if not signals:
+            # this tells the interface to turn off all the valves
             self.valves_control(OFF)
-        elif self.testing_mode:
-            self.test(signals)
-        elif self.is_casting:
-            self.cast(signals, timeout=timeout)
         else:
-            self.punch(signals)
+            cast = partial(self.cast, timeout=timeout)
+            send_routine = (self.test if self.testing_mode
+                            else cast if self.is_casting else self.punch)
+            for _ in repetitions:
+                send_routine(codes)
 
     def cast(self, codes, timeout=None):
         """Monotype composition caster.
@@ -869,7 +867,7 @@ class Interface(InterfaceBase):
         wait for sensor to go OFF, turn off the valves.
         """
         if not self.is_working:
-            raise lrp2c.InterfaceNotStarted
+            raise librpi2caster.InterfaceNotStarted
 
         # allow the use of a custom timeout
         timeout = timeout or self.config['sensor_timeout']

@@ -105,7 +105,8 @@ def operation_mode(interface):
         request_data = request.get_json()
         interface.operation_mode = request_data.get('mode')
     elif request.method == DELETE:
-        interface.operation_mode = 'reset'
+        # reset to default
+        interface.operation_mode = librpi2caster.OFF
     return dict(mode=interface.operation_mode)
 
 
@@ -121,7 +122,7 @@ def row16_mode(interface):
         request_data = request.get_json()
         interface.row16_mode = request_data.get('mode')
     elif request.method == DELETE:
-        interface.row16_mode = 'reset'
+        interface.row16_mode = librpi2caster.OFF
     return dict(mode=interface.row16_mode)
 
 
@@ -160,10 +161,11 @@ def signals(interface):
     elif request.method in (POST, PUT):
         request_data = request.get_json() or {}
         codes = request_data.get('signals') or []
+        number = request_data.get('number') or request_data.get('times') or 1
         timeout = request_data.get('timeout')
-        interface.send_signals(codes, timeout)
+        interface.send_signals(codes, number, timeout)
     elif request.method == DELETE:
-        interface.valves_control(False)
+        interface.valves_control(librpi2caster.OFF)
     return interface.current_status
 
 
@@ -194,7 +196,7 @@ def control(interface, device_name):
         device_state = request.get_json().get(device_name)
         result = routine(device_state)
     elif request.method == DELETE:
-        result = routine(False)
+        result = routine(librpi2caster.OFF)
     elif request.method == GET:
-        result = routine(None)
+        result = routine()
     return dict(active=result)
