@@ -17,11 +17,8 @@ import RPi.GPIO as GPIO
 
 import librpi2caster
 from librpi2caster import ON, OFF, HMN, KMN, UNITSHIFT, CASTING, PUNCHING
-from rpi2casterd.webapi import INTERFACES, APP
 
-# signals to send to the valves
-OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
-                        *(str(x) for x in range(1, 15)), 'O15'])
+from rpi2casterd.webapi import INTERFACES, APP
 
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2casterd.conf'
@@ -120,7 +117,7 @@ def parse_configuration(source):
         """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
         Allow only known defined signals."""
         raw = [x.strip().upper() for x in input_string.split(',')]
-        return [x for x in raw if x in OUTPUT_SIGNALS]
+        return [x for x in raw if x in librpi2caster.OUTPUT_SIGNALS]
 
     def strings(input_string):
         """Convert 'abc , def, 012' -> ['abc', 'def', '012']
@@ -441,16 +438,7 @@ class InterfaceBase:
     @signals.setter
     def signals(self, source):
         """Set the current signals."""
-        arranged = deque(s for s in OUTPUT_SIGNALS if s in source)
-        # put NI, NL, NK, NJ, NKJ etc. at the front
-        if 'N' in arranged:
-            for other in 'JKLI':
-                if other in source:
-                    arranged.remove('N')
-                    arranged.remove(other)
-                    arranged.appendleft(other)
-                    arranged.appendleft('N')
-        self.status['signals'] = list(arranged)
+        self.status['signals'] = source
 
     @property
     def sensor_state(self):
@@ -669,17 +657,23 @@ class Interface(InterfaceBase):
             stop()
         return self.is_working
 
-    def valves_control(self, state):
+    def valves_control(self, state=None):
         """Turn valves on or off, check valve status.
         Accepts signals (turn on), False (turn off) or None (get the status)"""
-        if state:
-            self.output.valves_on(state)
-            self.signals = state
-            self.update_pump_and_wedges()
-        elif state is None:
+        if state is None:
+            # get the status
             pass
-        else:
+        elif not state:
+            # False, 0, empty container etc.
             self.output.valves_off()
+        else:
+            # got the signals
+            parse = librpi2caster.parse_signals
+            codes = parse(state, self.operation_mode,
+                          self.row16_mode, self.testing_mode)
+            self.output.valves_on(codes)
+            self.signals = codes
+            self.update_pump_and_wedges()
         return self.signals
 
     @handle_machine_stop
@@ -839,13 +833,11 @@ class Interface(InterfaceBase):
             # this tells the interface to turn off all the valves
             self.valves_control(OFF)
             return
-        codes = librpi2caster.parse_signals(signals, self.operation_mode,
-                                            self.row16_mode, self.testing_mode)
         cast = partial(self.cast, timeout=timeout)
         send_routine = (self.test if self.testing_mode
                         else cast if self.is_casting else self.punch)
         for _ in range(repetitions or 1):
-            send_routine(codes)
+            send_routine(signals)
 
     def cast(self, codes, timeout=None):
         """Monotype composition caster.

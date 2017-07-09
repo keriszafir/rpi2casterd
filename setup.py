@@ -6,7 +6,7 @@ __author__ = 'Christophe Slychan'
 __author_email__ = 'krzysztof.slychan@gmail.com'
 __github_url__ = 'http://github.com/elegantandrogyne/rpi2casterd'
 __dependencies__ = ['RPi.GPIO >= 0.6.3', 'Flask >= 0.12',
-                    'librpi2caster >= 1.0']
+                    'librpi2caster >= 1.1']
 
 with open('README.rst', 'r') as readme_file:
     long_description = readme_file.read()
