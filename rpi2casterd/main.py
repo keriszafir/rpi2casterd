@@ -857,7 +857,7 @@ class Interface(InterfaceBase):
             cast = partial(self.cast, timeout=timeout)
             send_routine = (self.test if self.testing_mode
                             else cast if self.is_casting else self.punch)
-            for _ in repetitions:
+            for _ in range(repetitions):
                 send_routine(codes)
 
     def cast(self, codes, timeout=None):
