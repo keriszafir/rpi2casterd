@@ -571,12 +571,10 @@ class Interface(InterfaceBase):
         for gpio_name, direction in self.gpio_definitions.items():
             gpio_config_name = '{}_gpio'.format(gpio_name)
             gpio_number = config[gpio_config_name]
-            # skip 0 or None
-            if not gpio_number:
-                continue
-            # configure the GPIO
-            GPIO.setup(gpio_number, direction)
             self.gpios[gpio_name] = gpio_number
+            # skip 0 or None
+            if gpio_number:
+                GPIO.setup(gpio_number, direction)
 
         with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
