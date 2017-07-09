@@ -509,21 +509,6 @@ class InterfaceBase:
             message = 'Cannot do that - the machine is already working.'
             raise librpi2caster.InterfaceBusy(message)
 
-    def check_pump(self):
-        """Check if the pump is working or not"""
-        def found(code):
-            """check if code was found in a combination"""
-            return set(code).issubset(self.signals)
-
-        # cache this to avoid double dictionary lookup for each check
-        if found(['0075']) or found('NK'):
-            return ON
-        elif found(['0005']) or found('NJ'):
-            return OFF
-        else:
-            # state does not change
-            return self.pump_working
-
     def check_rotation(self, revolutions=3):
         """Check whether the machine is turning.
         The machine must typically go 3 revolutions of the main shaft."""
@@ -538,14 +523,11 @@ class InterfaceBase:
             """check if code was found in a combination"""
             return set(code).issubset(self.signals)
 
-        # first check the pump status
+        # check 0075 wedge position and determine the pump status:
+        # find the earliest row number or default to 15
         if found(['0075']) or found('NK'):
+            # 0075 always turns the pump on
             self.pump_working = ON
-        elif found(['0005']) or found('NJ'):
-            self.pump_working = OFF
-
-        # check 0075: find the earliest row number or default to 15
-        if found(['0075']) or found('NK'):
             for pos in range(1, 15):
                 if str(pos) in self.signals:
                     self.status['wedge_0075'] = pos
@@ -553,7 +535,12 @@ class InterfaceBase:
             else:
                 self.status['wedge_0075'] = 15
 
-        # check 0005: find the earliest row number or default to 15
+        elif found(['0005']) or found('NJ'):
+            # 0005 without 0075 turns the pump off
+            self.pump_working = OFF
+
+        # check 0005 wedge position:
+        # find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
             for pos in range(1, 15):
                 if str(pos) in self.signals:
@@ -687,8 +674,8 @@ class Interface(InterfaceBase):
         Accepts signals (turn on), False (turn off) or None (get the status)"""
         if state:
             self.output.valves_on(state)
-            self.update_pump_and_wedges()
             self.signals = state
+            self.update_pump_and_wedges()
         elif state is None:
             pass
         else:
