@@ -37,18 +37,18 @@ If a new operation or row 16 addressing mode is unsupported by the interface's c
 the ``modes`` request will get an error message, stating that a mode we want to use is not supported.
 
 The ``casting`` operation mode limits the choice of row 16 addressing modes to the supported modes only,
-whereas the ``punching``, ``manual punching`` or ``testing`` modes can use all row 16 addressing modes.
+whereas the ``punching`` mode can use all row 16 addressing modes.
 
 Starting
 --------
 
 The interface needs to be started up in order to work. The startup procedure ensures that:
 
-1. the interface has not been claimed by any other client,
+1. the interface is not busy - has not been claimed by any other client,
 2. air and (for casting only) water and motor is turned on, if the hardware supports this,
 3. (for casting) the machine is actually turning,
 4. an "interface in use" LED (green) is turned on, if hardware supports this,
-5. the interface will be claimed until released by the ``stop`` method.
+5. the interface will stay busy until released by the ``stop`` method.
 
 Stopping
 --------
@@ -56,8 +56,8 @@ Stopping
 Stopping the interface ensures that:
 
 1. if the pump is working, it is stopped (see the pump control section),
-2. air and (for casting) water and motor is turned off,
-3. the "interface in use" LED is turned off,
+2. air and (for casting) water and motor is turned off, if hardware supports this,
+3. the "interface in use" LED is turned off, if hardware supports this,
 4. the interface is released for the future clients to claim.
 
 Stopping is done by a request to ``/machine``, or a ``MachineStopped`` exception occurring in the program.
@@ -79,7 +79,9 @@ wedge's position.
 Motor control
 -------------
 
-The ``/motor`` endpoint gets the status 
+The ``/motor`` endpoint gets the status of the caster's motor.
+``PUT``, ``POST`` or ``DELETE`` requests change its state.
+If the interface's configuration does not support motor relay, the server replies with ``501 Not Implemented``.
 
 
 Sending signals
@@ -87,19 +89,23 @@ Sending signals
 
 The most important part of the controller.
 
+Based on the caster's current testing/operation mode and row 16 addressing mode, the signals are changed
+in order to activate the mechanisms such as ribbon advance and row 16 addressing attachment.
+
+The signals can be sent for repeated casting/punching.
+
+Sending signals can take place only when the interface has been previously started and claimed as busy;
+otherwise, ``InterfaceNotStarted`` is raised in the casting mode, and the startup is done automatically
+in the punching and testing modes.
+
+If sending no signals, the valves are closed.
+
+
 Operation modes
 _______________
 
 The interface / driver can operate in different modes, denoted by the ``mode`` parameter
 in the ``modes`` POST request's JSON payload. Depending on the mode, the behavior and signals sent vary.
-
-testing
-~~~~~~~
-
-All signals are sent as specified.
-No additional modifications are made (except for row 16 addressing, if needed).
-The driver closes any opened valves, then turns on the valves corresponding to the signals
-found in request, and returns a success message.
 
 casting
 ~~~~~~~
@@ -139,18 +145,16 @@ The control sequence is as follows:
 4. wait time_off for punches to come back down,
 5. return a success reply to the request.
 
-manual punching
-~~~~~~~~~~~~~~~
 
-As above, but the control behavior relies on the operator to advance the process:
+Testing mode
+------------
 
-1. turn the valves on,
-2. wait time_on for the punches to go up,
-3. turn the valves off,
-4. return a success reply.
+All signals are sent as specified. ``O`` and ``15`` are converted to the combined ``O15`` signal
+and present on the output. Row 16 addressing modifications are also done, based on mode. 
 
-The client side pauses the execution until the operator confirms the advance
-to the next combination.
+The driver closes any open valves, then turns on the valves corresponding to the signals
+found in request, and returns a success message.
+
 
 Additional row 16 addressing modes
 ----------------------------------
@@ -173,14 +177,14 @@ Some Monotype casters (especially from 1960s and later) are equipped with specia
 attachments (either from the very beginning, or retrofitted) for addressing
 the additional row. There were three such systems.
 
-off
-~~~
+off = ``False``
+~~~~~~~~~~~~~~~
 
 This means that a sort will be cast from row 15 instead of 16.
 No modification to signals apart from replacing row 16 with 15.
 
-HMN
-~~~
+``HMN``
+~~~~~~~
 
 The earliest system, devised by one of Monotype's customers.
 It is based on combined signals (similar to N+I, N+L addressing of two additional columns).
@@ -193,8 +197,8 @@ For row 16, additional signals are introduced based on column:
 4. O (no signal) - add HMN
 5. {ABCDEFGIJKL} - add HM - HM{ABCDEFGIJKL}
 
-KMN
-~~~
+``KMN``
+~~~~~~~
 
 Devised by Monotype and similar to HMN.
 The extra signals are a little bit different.
@@ -205,8 +209,8 @@ The extra signals are a little bit different.
 4. O (no signal) - add KMN
 5. {ABCDEFGHIJL} - add KM - KM{ABCDEFGHIJL}
 
-unit shift
-~~~~~~~~~~
+``unit shift``
+~~~~~~~~~~~~~~
 
 Introduced by Monotype in 1963 and standard on all machines soon after.
 When the attachment is activated, a signal D is re-routed to an additional pin on
