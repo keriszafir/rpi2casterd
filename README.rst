@@ -1,5 +1,5 @@
 rpi2casterd
-=================
+===========
 
 Hardware driver and web API for rpi2caster
 ------------------------------------------
@@ -177,8 +177,10 @@ Some Monotype casters (especially from 1960s and later) are equipped with specia
 attachments (either from the very beginning, or retrofitted) for addressing
 the additional row. There were three such systems.
 
-off = ``False``
-~~~~~~~~~~~~~~~
+off
+~~~
+
+value: ``False``
 
 This means that a sort will be cast from row 15 instead of 16.
 No modification to signals apart from replacing row 16 with 15.
@@ -197,8 +199,8 @@ For row 16, additional signals are introduced based on column:
 4. O (no signal) - add HMN
 5. {ABCDEFGIJKL} - add HM - HM{ABCDEFGIJKL}
 
-``KMN``
-~~~~~~~
+KMN
+~~~
 
 Devised by Monotype and similar to HMN.
 The extra signals are a little bit different.
@@ -209,8 +211,8 @@ The extra signals are a little bit different.
 4. O (no signal) - add KMN
 5. {ABCDEFGHIJL} - add KM - KM{ABCDEFGHIJL}
 
-``unit shift``
-~~~~~~~~~~~~~~
+unit shift
+~~~~~~~~~~
 
 Introduced by Monotype in 1963 and standard on all machines soon after.
 When the attachment is activated, a signal D is re-routed to an additional pin on
@@ -224,6 +226,7 @@ So:
 1. replace D with EF in the original combination,
 2. add D if addressing the row 16.
 
+
 Advanced features
 -----------------
 
@@ -235,6 +238,7 @@ Apart from getting the machine cycle sensor state and sending signals to solenoi
 the program can start and stop the machine's motor, control additional water and air cutoff valves,
 use an emergency stop button to stop the machine when something bad happens, and light a LED
 when the controller is trying to stop the caster's pump.
+
 
 API documentation
 =================
