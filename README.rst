@@ -185,8 +185,8 @@ value: ``False``
 This means that a sort will be cast from row 15 instead of 16.
 No modification to signals apart from replacing row 16 with 15.
 
-``HMN``
-~~~~~~~
+HMN
+~~~
 
 The earliest system, devised by one of Monotype's customers.
 It is based on combined signals (similar to N+I, N+L addressing of two additional columns).
