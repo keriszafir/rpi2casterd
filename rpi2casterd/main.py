@@ -277,6 +277,8 @@ def daemon_setup():
                     GPIO.add_event_detect(gpio, edge, callbk, bouncetime=50)
                 except RuntimeError:
                     GPIO.add_event_callback(gpio, callbk)
+                except TypeError:
+                    pass
         return gpio
 
     # set up the ready LED and shutdown/reboot buttons, if possible
