@@ -166,6 +166,7 @@ If ``mode`` is ``casting``, the choice of ``row16_mode`` is limited by the
 ``punching`` and ``manual punching`` modes can operate with all four row 16 addressing modes.
 Depending on the selection, the signals sent to valves will be changed to fit the control system in use.
 
+
 Why all this?
 ~~~~~~~~~~~~~
 
@@ -177,6 +178,7 @@ Some Monotype casters (especially from 1960s and later) are equipped with specia
 attachments (either from the very beginning, or retrofitted) for addressing
 the additional row. There were three such systems.
 
+
 off
 ~~~
 
@@ -184,6 +186,7 @@ value: ``False``
 
 This means that a sort will be cast from row 15 instead of 16.
 No modification to signals apart from replacing row 16 with 15.
+
 
 HMN
 ~~~
@@ -199,6 +202,7 @@ For row 16, additional signals are introduced based on column:
 4. O (no signal) - add HMN
 5. {ABCDEFGIJKL} - add HM - HM{ABCDEFGIJKL}
 
+
 KMN
 ~~~
 
@@ -210,6 +214,7 @@ The extra signals are a little bit different.
 3. N - add M - KM
 4. O (no signal) - add KMN
 5. {ABCDEFGHIJL} - add KM - KM{ABCDEFGHIJL}
+
 
 unit shift
 ~~~~~~~~~~

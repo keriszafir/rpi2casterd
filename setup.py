@@ -1,7 +1,7 @@
 """rpi2casterd setup: this software SHOULD be installed on a Raspberry Pi."""
 from setuptools import setup
 
-__version__ = '1.0'
+__version__ = '1.01'
 __author__ = 'Christophe Slychan'
 __author_email__ = 'krzysztof.slychan@gmail.com'
 __github_url__ = 'http://github.com/elegantandrogyne/rpi2casterd'

@@ -51,22 +51,22 @@ LEDS = dict()
 
 def turn_on(gpio, raise_exception=False):
     """Turn on a specified GPIO output"""
-    try:
-        GPIO.output(gpio, ON)
-    except ValueError:
-        # GPIO pin was None
+    if not gpio:
         if raise_exception:
             raise NotImplementedError
+        else:
+            return
+    GPIO.output(gpio, ON)
 
 
 def turn_off(gpio, raise_exception=False):
     """Turn off a specified GPIO output"""
-    try:
-        GPIO.output(gpio, OFF)
-    except ValueError:
-        # GPIO pin was None
+    if not gpio:
         if raise_exception:
             raise NotImplementedError
+        else:
+            return
+    GPIO.output(gpio, OFF)
 
 
 def get_state(gpio):
