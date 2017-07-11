@@ -1,6 +1,6 @@
 [Unit]
 Description=rpi2casterd - hardware interface control daemon for rpi2caster
-After=ssh.service
+After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/rpi2casterd
