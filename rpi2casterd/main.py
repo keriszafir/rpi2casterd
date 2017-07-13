@@ -385,6 +385,7 @@ class InterfaceBase:
         if not mode:
             # allow to turn it off in any case
             self.status['current_row16_mode'] = OFF
+            return
         elif mode not in (HMN, KMN, UNITSHIFT):
             return
         if self.is_casting:
