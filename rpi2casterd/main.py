@@ -94,7 +94,7 @@ def teardown():
     """Unregister the exported GPIOs"""
     # cleanup the registered interfaces
     for interface_id, interface in INTERFACES.items():
-        interface.machine_control(OFF)
+        interface.stop()
         INTERFACES[interface_id] = None
     INTERFACES.clear()
     # turn off and cleanup the LEDs
@@ -228,7 +228,7 @@ def handle_machine_stop(routine):
             check_emergency_stop()
             return retval
         except (librpi2caster.MachineStopped, KeyboardInterrupt):
-            interface.machine_control(OFF)
+            interface.stop()
             raise librpi2caster.MachineStopped
     return wrapper
 
@@ -581,7 +581,7 @@ class Interface(InterfaceBase):
 
         with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
-            GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.FALLING,
+            GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.BOTH,
                                   bouncetime=config['debounce_milliseconds'])
         try:
             # register a callback to update the RPM meter
@@ -612,55 +612,57 @@ class Interface(InterfaceBase):
             raise librpi2caster.ConfigurationError('{}: module not installed'
                                                    .format(output_name))
 
+    def start(self):
+        """Starts the machine. When casting, check if it's running."""
+        self.check_if_busy()
+        # reset the RPM counter
+        self.meter_events.clear()
+        # turn on the compressed air
+        with suppress(NotImplementedError):
+            self.air_control(ON)
+        # make sure the machine is turning before proceeding
+        if self.is_casting and not self.testing_mode:
+            # turn on the cooling water and motor
+            with suppress(NotImplementedError):
+                self.water_control(ON)
+            with suppress(NotImplementedError):
+                self.motor_control(ON)
+            self.check_rotation()
+        # properly initialized => mark it as working
+        self.is_working = True
+
+    def stop(self):
+        """Stop the machine, making sure that the pump is disengaged."""
+        if self.is_working:
+            self.pump_control(OFF)
+            self.valves_control(OFF)
+            self.signals = []
+            if self.is_casting and not self.testing_mode:
+                # turn off the motor
+                with suppress(NotImplementedError):
+                    self.motor_control(OFF)
+                # turn off the cooling water
+                with suppress(NotImplementedError):
+                    self.water_control(OFF)
+            with suppress(NotImplementedError):
+                # turn off the machine air supply
+                self.air_control(OFF)
+            # release the interface so others can claim it
+            self.is_working = False
+        self.testing_mode = False
+
     def machine_control(self, state=None):
         """Machine and interface control.
         If no state or state is None, return the current working state.
         If state evaluates to True, start the machine.
         If state evaluates to False, stop (and try to stop the pump).
         """
-        def start():
-            """Start the machine.
-            Casting requires that the machine is running before proceeding."""
-            self.check_if_busy()
-            # reset the RPM counter
-            self.meter_events.clear()
-            # turn on the compressed air
-            with suppress(NotImplementedError):
-                self.air_control(ON)
-            # make sure the machine is turning before proceeding
-            if self.is_casting and not self.testing_mode:
-                # turn on the cooling water and motor
-                with suppress(NotImplementedError):
-                    self.water_control(ON)
-                with suppress(NotImplementedError):
-                    self.motor_control(ON)
-                self.check_rotation()
-            # properly initialized => mark it as working
-            self.is_working = True
-
-        def stop():
-            """Stop the machine."""
-            if self.is_working:
-                self.pump_control(OFF)
-                self.valves_control(OFF)
-                self.signals = []
-                if self.is_casting and not self.testing_mode:
-                    with suppress(NotImplementedError):
-                        self.motor_control(OFF)
-                    with suppress(NotImplementedError):
-                        self.water_control(OFF)
-                with suppress(NotImplementedError):
-                    self.air_control(OFF)
-                # release the interface so others can claim it
-                self.is_working = False
-            self.testing_mode = False
-
         if state is None:
             pass
         elif state:
-            start()
+            self.start()
         else:
-            stop()
+            self.stop()
         return self.is_working
 
     def valves_control(self, state=None):
@@ -866,7 +868,7 @@ class Interface(InterfaceBase):
         """Turn off any previous combination, then send signals.
         """
         if not self.is_working:
-            self.machine_control(ON)
+            self.start(ON)
 
         # change the active combination
         self.valves_control(OFF)
@@ -880,7 +882,7 @@ class Interface(InterfaceBase):
         ("punching_off_time").
         """
         if not self.is_working:
-            self.machine_control(ON)
+            self.start()
 
         # timer-driven operation
         self.valves_control(codes)
