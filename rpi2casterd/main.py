@@ -469,14 +469,13 @@ class InterfaceBase:
         status.update(speed='{}rpm'.format(self.rpm()))
         return status
 
-    @handle_machine_stop
     def wait_for_sensor(self, new_state, timeout=None):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
         raise MachineStopped."""
         start_time = time.time()
-        timeout = timeout or self.config['sensor_timeout']
+        timeout = timeout if timeout else self.config['sensor_timeout']
         while self.sensor_state != new_state:
             if time.time() - start_time > timeout:
                 raise librpi2caster.MachineStopped
@@ -569,12 +568,15 @@ class Interface(InterfaceBase):
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
             self.sensor_state = get_state(sensor_gpio)
+            print('Photocell sensor goes {}'
+                  .format('ON' if self.sensor_state else 'OFF'))
             if self.sensor_state:
                 self.meter_events.append(time.time())
 
         def update_emergency_stop(emergency_stop_gpio):
             """Check and update the emergency stop status"""
-            self.emergency_stop_state = GPIO.input(emergency_stop_gpio)
+            self.emergency_stop_state = get_state(emergency_stop_gpio)
+            print('Emergency stop button pressed!')
 
         # set up the controls
         self.gpios = dict()
@@ -620,6 +622,7 @@ class Interface(InterfaceBase):
             raise librpi2caster.ConfigurationError('{}: module not installed'
                                                    .format(output_name))
 
+    @handle_machine_stop
     def start(self):
         """Starts the machine. When casting, check if it's running."""
         self.check_if_busy()
@@ -858,6 +861,7 @@ class Interface(InterfaceBase):
         for _ in range(repetitions or 1):
             send_routine(signals)
 
+    @handle_machine_stop
     def cast(self, codes, timeout=None):
         """Monotype composition caster.
 
@@ -875,6 +879,7 @@ class Interface(InterfaceBase):
         self.wait_for_sensor(OFF, timeout=timeout)
         self.valves_control(OFF)
 
+    @handle_machine_stop
     def test(self, codes):
         """Turn off any previous combination, then send signals.
         """
@@ -885,6 +890,7 @@ class Interface(InterfaceBase):
         self.valves_control(OFF)
         self.valves_control(codes)
 
+    @handle_machine_stop
     def punch(self, codes):
         """Timer-driven ribbon perforator.
 
