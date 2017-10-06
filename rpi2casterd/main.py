@@ -219,6 +219,7 @@ def handle_machine_stop(routine):
         def check_emergency_stop():
             """check if the emergency stop button registered any events"""
             if GPIO.event_detected(interface.gpios['emergency_stop']):
+                print('Emergency stop button pressed!')
                 raise librpi2caster.MachineStopped
 
         try:
