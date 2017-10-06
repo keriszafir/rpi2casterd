@@ -218,8 +218,8 @@ def handle_machine_stop(routine):
         """wraps the routine"""
         def check_emergency_stop():
             """check if the emergency stop button registered any events"""
-            if GPIO.event_detected(interface.gpios['emergency_stop']):
-                print('Emergency stop button pressed!')
+            if interface.emergency_stop_state:
+                interface.emergency_stop_state = OFF
                 raise librpi2caster.MachineStopped
 
         try:
@@ -344,6 +344,8 @@ class InterfaceBase:
         default_operation_mode = self.config['default_operation_mode']
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
+        # was emergency stop triggered?
+        self.emergency_stop_state = OFF
         # temporary GPIO dict (can be populated in hardware_setup)
         self.gpios = dict(working_led=None)
         # initialize machine state
@@ -570,6 +572,10 @@ class Interface(InterfaceBase):
             if self.sensor_state:
                 self.meter_events.append(time.time())
 
+        def update_emergency_stop(emergency_stop_gpio):
+            """Check and update the emergency stop status"""
+            self.emergency_stop_state = GPIO.input(emergency_stop_gpio)
+
         # set up the controls
         self.gpios = dict()
         for gpio_name, direction in self.gpio_definitions.items():
@@ -582,7 +588,8 @@ class Interface(InterfaceBase):
 
         with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
-            GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.BOTH,
+            GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.RISING,
+                                  callback=update_emergency_stop,
                                   bouncetime=config['debounce_milliseconds'])
         try:
             # register a callback to update the RPM meter
@@ -618,12 +625,15 @@ class Interface(InterfaceBase):
         self.check_if_busy()
         # reset the RPM counter
         self.meter_events.clear()
+        # reset the emergency stop status
+        self.emergency_stop_state = OFF
         # turn on the compressed air
         with suppress(NotImplementedError):
             self.air_control(ON)
         # make sure the machine is turning before proceeding
         if self.is_casting and not self.testing_mode:
-            # turn on the cooling water and motor
+            # turn on the cooling water and motor, check the machine rotation
+            # if MachineStopped is raised, it'll bubble up from here
             with suppress(NotImplementedError):
                 self.water_control(ON)
             with suppress(NotImplementedError):
