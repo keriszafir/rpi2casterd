@@ -588,6 +588,12 @@ class Interface(InterfaceBase):
             if gpio_number:
                 GPIO.setup(gpio_number, direction)
 
+        # does the interface offer the motor start/stop capability?
+        if self.gpios.get('motor_start') and self.gpios.get('motor_stop'):
+            self.config['has_motor_control'] = True
+        else:
+            self.config['has_motor_control'] = False
+
         with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
             GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.RISING,
@@ -708,16 +714,18 @@ class Interface(InterfaceBase):
             return self.status['motor']
         elif state:
             start_gpio = self.gpios['motor_start']
-            turn_on(start_gpio, raise_exception=True)
-            time.sleep(0.5)
-            turn_off(start_gpio)
+            if start_gpio:
+                turn_on(start_gpio, raise_exception=True)
+                time.sleep(0.5)
+                turn_off(start_gpio)
             self.status['motor'] = ON
             return ON
         else:
             stop_gpio = self.gpios['motor_stop']
-            turn_on(stop_gpio, raise_exception=True)
-            time.sleep(0.5)
-            turn_off(stop_gpio)
+            if stop_gpio:
+                turn_on(stop_gpio, raise_exception=True)
+                time.sleep(0.5)
+                turn_off(stop_gpio)
             self.status['motor'] = OFF
             self.meter_events.clear()
             return OFF
