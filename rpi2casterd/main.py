@@ -330,6 +330,7 @@ def handle_request(routine):
 
 def main():
     """Starts the application. Contains web API subroutines."""
+    interface = None
     try:
         # get the listen address and port
         config = CFG.defaults()
@@ -337,18 +338,18 @@ def main():
         # initialize hardware
         daemon_setup()
         # interface configuration
-        try:
-            section = CFG.get('Interface') or CFG.get('interface')
-            settings = parse_configuration(section)
-            interface = Interface(settings)
-        except KeyError as exception:
-            raise librpi2caster.ConfigurationError(exception)
+        section = CFG['Interface']
+        settings = parse_configuration(section)
+        interface = Interface(settings)
         # all configured - it's ready to work
         ready_led_gpio = LEDS.get('ready')
         turn_on(ready_led_gpio)
         # start the web application
         webapi = WebAPI(interface, address, port)
         webapi.run()
+
+    except KeyError as exception:
+        raise librpi2caster.ConfigurationError(exception)
 
     except (OSError, PermissionError, RuntimeError) as exception:
         print('ERROR: Not enough privileges to do this.')
@@ -362,7 +363,8 @@ def main():
 
     finally:
         # make sure the GPIOs are de-configured properly
-        interface.stop()
+        with suppress(AttributeError):
+            interface.stop()
         for led_gpio in LEDS.values():
             turn_off(led_gpio)
         LEDS.clear()
