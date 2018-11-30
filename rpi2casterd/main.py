@@ -312,7 +312,7 @@ def handle_request(routine):
         """wraps the routine"""
         try:
             # does the function return any json-ready parameters?
-            outcome = webapi.routine(*args, **kwargs) or dict()
+            outcome = routine(webapi, *args, **kwargs) or dict()
             # if caught no exceptions, all went well => return success
             return jsonify(OrderedDict(success=True, **outcome))
         except KeyError:
