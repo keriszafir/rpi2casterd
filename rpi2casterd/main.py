@@ -334,10 +334,9 @@ def handle_request(routine):
     return wrapper
 
 
-def main():
-    """Starts the application. Contains web API subroutines."""
+def webapi(interface, address, port):
+    """Web API for controlling the interface."""
     app = Flask('rpi2caster')
-    interface = None
 
     @app.route('/', methods=ALL_METHODS)
     @handle_request
@@ -426,6 +425,14 @@ def main():
             result = routine()
         return dict(active=result)
 
+    if not interface:
+        print('Interface initialization failed. Not starting web API!')
+        return
+    app.run(address, port)
+
+
+def main():
+    """Starts the application. Contains web API subroutines."""
     try:
         # get the listen address and port
         config = CFG.defaults()
@@ -445,7 +452,7 @@ def main():
         ready_led_gpio = LEDS.get('ready')
         turn_on(ready_led_gpio)
         # start the web application
-        app.run(address, port)
+        webapi(interface, address, port)
 
     except (OSError, PermissionError, RuntimeError) as exception:
         print('ERROR: Not enough privileges to do this.')
