@@ -397,7 +397,7 @@ class WebAPI:
             request_data = request.get_json()
             print(request_data)
         return dict(status=self.interface.current_status,
-                    settings=self.interface.config)
+                    config=self.interface.config)
 
     @app.route('/justification', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
