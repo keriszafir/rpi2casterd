@@ -645,7 +645,7 @@ class Interface(InterfaceBase):
 
         # does the interface offer the motor start/stop capability?
         motor_feature = gpios.get('motor_start') and gpios.get('motor_stop')
-        self.config['has_motor_control'] = motor_feature
+        self.config['has_motor_control'] = bool(motor_feature)
 
         # use a GPIO pin for sensing punch/cast mode
         self.config['punch_mode'] = get_state(gpios['mode_detect'])
