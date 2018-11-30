@@ -8,17 +8,21 @@ using selectable backend libraries for greater configurability.
 """
 from collections import deque, OrderedDict
 from contextlib import suppress
-from functools import partial, wraps
+from functools import wraps
 import configparser
 import signal
 import subprocess
 import time
 import RPi.GPIO as GPIO
 
+from flask import Flask, abort, jsonify
+from flask.globals import request
 import librpi2caster
-from librpi2caster import ON, OFF, HMN, KMN, UNITSHIFT, CASTING, PUNCHING
 
-from rpi2casterd.webapi import INTERFACES, APP
+ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
+ON, OFF = True, False
+OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
+                        *(str(x) for x in range(1, 15)), 'O15'])
 
 # Where to look for config?
 CONFIGURATION_PATH = '/etc/rpi2casterd.conf'
@@ -34,13 +38,12 @@ DEFAULTS = dict(name='Monotype composition caster',
                 working_led_gpio='', error_led_gpio='',
                 air_gpio='', water_gpio='', emergency_stop_gpio='',
                 motor_start_gpio='', motor_stop_gpio='',
+                mode_detect_gpio='27',
                 i2c_bus='1', mcp0_address='0x20', mcp1_address='0x21',
                 valve1='N,M,L,K,J,I,H,G',
                 valve2='F,S,E,D,0075,C,B,A',
                 valve3='1,2,3,4,5,6,7,8',
-                valve4='9,10,11,12,13,14,0005,O15',
-                supported_operation_modes=', '.join((CASTING, PUNCHING)),
-                supported_row16_modes=', '.join((HMN, KMN, UNITSHIFT)))
+                valve4='9,10,11,12,13,14,0005,O15')
 CFG = configparser.ConfigParser(defaults=DEFAULTS)
 CFG.read(CONFIGURATION_PATH)
 
@@ -90,21 +93,6 @@ def blink(gpio=None, seconds=0.5, times=3):
         time.sleep(seconds)
 
 
-def teardown():
-    """Unregister the exported GPIOs"""
-    # cleanup the registered interfaces
-    for interface_id, interface in INTERFACES.items():
-        interface.stop()
-        INTERFACES[interface_id] = None
-    INTERFACES.clear()
-    # turn off and cleanup the LEDs
-    for led_name, led_gpio in LEDS.items():
-        turn_off(led_gpio)
-        LEDS[led_name] = None
-    LEDS.clear()
-    GPIO.cleanup()
-
-
 def get(parameter, source, convert):
     """Gets a value from a specified source for a given parameter,
     converts it to a desired data type"""
@@ -122,7 +110,7 @@ def get(parameter, source, convert):
         """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
         Allow only known defined signals."""
         raw = [x.strip().upper() for x in input_string.split(',')]
-        return [x for x in raw if x in librpi2caster.OUTPUT_SIGNALS]
+        return [x for x in raw if x in OUTPUT_SIGNALS]
 
     def list_of_strings(input_string):
         """Convert 'abc , def, 012' -> ['abc', 'def', '012']
@@ -161,18 +149,46 @@ def get(parameter, source, convert):
     return routine(source_value)
 
 
+def parse_signals(input_signals):
+    """Parses the source sequence (str, list, tuple etc.)
+    and returns an arranged list of Monotype signals."""
+    def is_present(value):
+        """Detect and dispatch known signals in source string"""
+        nonlocal source
+        string = str(value)
+        if string in source:
+            # required for correct parsing of numbers
+            source = source.replace(string, '')
+            return True
+        else:
+            return False
+
+    try:
+        source = input_signals.upper()
+    except AttributeError:
+        source = ''.join(str(x) for x in input_signals).upper()
+
+    useful = ['0005', '0075', *(str(x) for x in range(16, 0, -1)),
+              *'ABCDEFGHIJKLMNOS']
+    parsed_signals = {s for s in useful if is_present(s)}
+    # change O and 15 to O15 which is needed for punching
+    parsed_signals.replace('O', 'O15')
+    parsed_signals.replace('15', 'O15')
+    arranged = deque(s for s in OUTPUT_SIGNALS if s in parsed_signals)
+    # put NI, NL, NK, NJ, NKJ etc. at the front
+    if 'N' in arranged:
+        for other in 'JKLI':
+            if other in parsed_signals:
+                arranged.remove('N')
+                arranged.remove(other)
+                arranged.appendleft(other)
+                arranged.appendleft('N')
+    return list(arranged)
+
+
 def parse_configuration(source):
     """Get the interface parameters from a config parser section"""
     config = OrderedDict()
-    # caster name
-    config['name'] = get('name', source, str)
-    # supported operation and row 16 addressing modes
-    modes = get('supported_operation_modes', source, 'strings')
-    row16_modes = get('supported_row16_modes', source, 'strings')
-    config['supported_operation_modes'] = modes
-    config['supported_row16_modes'] = row16_modes
-    config['default_operation_mode'] = modes[0]
-
     # determine the output driver
     config['output_driver'] = get('output_driver', source, 'lcstring')
 
@@ -192,6 +208,7 @@ def parse_configuration(source):
     config['motor_stop_gpio'] = get('motor_stop_gpio', source, 'inone')
     config['water_gpio'] = get('water_gpio', source, 'inone')
     config['air_gpio'] = get('air_gpio', source, 'inone')
+    config['mode_detect_gpio'] = get('mode_detect_gpio', source, 'inone')
 
     # time (in milliseconds) for software debouncing
     debounce_milliseconds = get('debounce_milliseconds', source, int)
@@ -291,35 +308,153 @@ def daemon_setup():
     signal.signal(signal.SIGTERM, signal_handler)
 
 
-def interface_setup():
-    """Setup the interfaces"""
-    # greedily instantiate the interfaces
-    for name, section in CFG.items():
-        if name.lower() == 'default':
-            # don't treat this as an interface
-            continue
+def handle_request(routine):
+    """Boilerplate code for the flask API functions,
+    used for handling requests to interfaces."""
+    @wraps(routine)
+    def wrapper(*args, **kwargs):
+        """wraps the routine"""
         try:
-            settings = parse_configuration(section)
-        except KeyError as exception:
-            raise librpi2caster.ConfigurationError(exception)
-        interface = Interface(settings)
-        INTERFACES[name.lower().strip()] = interface
+            # does the function return any json-ready parameters?
+            outcome = routine(*args, **kwargs) or dict()
+            # if caught no exceptions, all went well => return success
+            return jsonify(OrderedDict(success=True, **outcome))
+        except KeyError:
+            abort(404)
+        except NotImplementedError:
+            abort(501)
+        except (librpi2caster.InterfaceNotStarted,
+                librpi2caster.InterfaceBusy,
+                librpi2caster.MachineStopped) as exception:
+            # HTTP response with an error code
+            return jsonify(OrderedDict(error_name=exception.name,
+                                       error_code=exception.code,
+                                       offending_value=str(exception) or None,
+                                       success=False))
+    return wrapper
 
 
 def main():
-    """Starts the application"""
+    """Starts the application. Contains web API subroutines."""
+    app = Flask('rpi2caster')
+    interface = None
+
+    @app.route('/')
+    @handle_request
+    def index():
+        """Get the read-only information about the interface.
+        Return the JSON-encoded dictionary with:
+            name: interface name
+            status: current interface state,
+            settings: static configuration (in /etc/rpi2casterd.conf)
+        """
+        return dict(status=interface.current_status, settings=interface.config)
+
+    @app.route('/', methods=(POST, PUT))
+    @handle_request
+    def handle_interface():
+        """Send information to the interface.
+            Accepts the request parameters:
+            testing_mode [True/False] - set the testing mode
+        """
+        request_data = request.get_json()
+        interface.testing_mode = request_data.get('testing_mode')
+        return interface.current_status
+
+    @app.route('/justification', methods=ALL_METHODS)
+    @handle_request
+    def justification():
+        """GET: get the current 0005 and 0075 justifying wedge positions,
+        PUT/POST: set new wedge positions (if position is None, keep current),
+        DELETE: reset wedges to 15/15."""
+        if request.method in (PUT, POST):
+            request_data = request.get_json()
+            wedge_0075 = request_data.get('wedge_0075')
+            wedge_0005 = request_data.get('wedge_0005')
+            galley_trip = request_data.get('galley_trip')
+            interface.justification(wedge_0005, wedge_0075, galley_trip)
+        elif request.method == DELETE:
+            interface.justification(wedge_0005=15, wedge_0075=15,
+                                    galley_trip=False)
+
+        # get the current wedge positions
+        current_0075 = interface.status['wedge_0075']
+        current_0005 = interface.status['wedge_0005']
+        return dict(wedge_0005=current_0005, wedge_0075=current_0075)
+
+    @app.route('/signals', methods=ALL_METHODS)
+    @handle_request
+    def signals():
+        """Sends the signals to the machine.
+        GET: gets the current signals,
+        PUT/POST: sends the signals to the machine;
+            the interface will parse and process them according to the current
+            operation and row 16 addressing mode."""
+        if request.method == GET:
+            return dict(signals=interface.signals)
+        elif request.method in (POST, PUT):
+            request_data = request.get_json() or {}
+            codes = request_data.get('signals') or []
+            timeout = request_data.get('timeout')
+            testing_mode = request_data.get('testing_mode')
+            interface.send_signals(codes, timeout, testing_mode)
+        elif request.method == DELETE:
+            interface.valves_control(OFF)
+        return interface.current_status
+
+    @app.route('/<device_name>', methods=ALL_METHODS)
+    @handle_request
+    def control(device_name):
+        """Change or check the status of one of the
+        machine/interface's controls:
+            -caster's pump,
+            -caster's motor (using two relays),
+            -compressed air supply,
+            -cooling water supply,
+            -solenoid valves.
+
+        GET checks the device's state.
+        DELETE turns the device off (sends False).
+        POST or PUT requests turn the device on (state=True), off (state=False)
+        or check the device's state (state=None or not specified).
+        """
+        # find a suitable interface method, otherwise it's not implemented
+        # handle_request will reply 501
+        method_name = '{}_control'.format(device_name)
+        try:
+            routine = getattr(interface, method_name)
+        except AttributeError:
+            raise NotImplementedError
+        # we're sure that we have a method
+        if request.method in (POST, PUT):
+            device_state = request.get_json().get(device_name)
+            result = routine(device_state)
+        elif request.method == DELETE:
+            result = routine(OFF)
+        elif request.method == GET:
+            result = routine()
+        return dict(active=result)
+
     try:
         # get the listen address and port
         config = CFG.defaults()
         address, port = get('listen_address', config, 'address')
         # initialize hardware
         daemon_setup()
-        interface_setup()
+        # interface configuration
+        for name, section in CFG.items():
+            if name.lower().startswith('interface'):
+                try:
+                    settings = parse_configuration(section)
+                    interface = Interface(settings)
+                    break
+                except KeyError as exception:
+                    raise librpi2caster.ConfigurationError(exception)
         # all configured - it's ready to work
         ready_led_gpio = LEDS.get('ready')
         turn_on(ready_led_gpio)
         # start the web application
-        APP.run(address, port)
+        app.run(address, port)
 
     except (OSError, PermissionError, RuntimeError) as exception:
         print('ERROR: Not enough privileges to do this.')
@@ -333,15 +468,18 @@ def main():
 
     finally:
         # make sure the GPIOs are de-configured properly
-        teardown()
+        interface.stop()
+        for led_name, led_gpio in LEDS.items():
+            turn_off(led_gpio)
+        LEDS[led_name] = None
+        LEDS.clear()
+        GPIO.cleanup()
 
 
 class InterfaceBase:
     """Basic data structures of an interface"""
     def __init__(self, config_dict):
         self.config = config_dict
-        # initialize the interface with empty state
-        default_operation_mode = self.config['default_operation_mode']
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
         # was emergency stop triggered?
@@ -349,67 +487,12 @@ class InterfaceBase:
         # temporary GPIO dict (can be populated in hardware_setup)
         self.gpios = dict(working_led=None)
         # initialize machine state
-        self.status = dict(wedge_0005=15, wedge_0075=15, testing_mode=OFF,
+        self.status = dict(wedge_0005=15, wedge_0075=15, punch_mode=False,
                            working=OFF, water=OFF, air=OFF, motor=OFF,
-                           pump=OFF, sensor=OFF, signals=[],
-                           current_operation_mode=default_operation_mode,
-                           current_row16_mode=OFF)
+                           pump=OFF, sensor=OFF, signals=[])
 
     def __str__(self):
         return self.config['name']
-
-    @property
-    def operation_mode(self):
-        """Get the current operation mode"""
-        return self.status['current_operation_mode']
-
-    @operation_mode.setter
-    def operation_mode(self, mode):
-        """Set the operation mode to a new value"""
-        self.check_if_busy()
-        if not mode:
-            default_operation_mode = self.config['default_operation_mode']
-            self.status['current_operation_mode'] = default_operation_mode
-        elif mode in self.config['supported_operation_modes']:
-            self.status['current_operation_mode'] = mode
-        else:
-            raise librpi2caster.UnsupportedMode(mode)
-
-    @property
-    def row16_mode(self):
-        """Get the current row 16 addressing mode"""
-        return self.status['current_row16_mode']
-
-    @row16_mode.setter
-    def row16_mode(self, mode):
-        """Set the row 16 addressing mode to a new value"""
-        # prevent mode change when machine is running
-        self.check_if_busy()
-        if not mode:
-            # allow to turn it off in any case
-            self.status['current_row16_mode'] = OFF
-            return
-        elif mode not in (HMN, KMN, UNITSHIFT):
-            return
-        if self.is_casting:
-            # allow only supported row 16 addressing modes
-            if mode in self.config['supported_row16_modes']:
-                self.status['current_row16_mode'] = mode
-            else:
-                raise librpi2caster.UnsupportedRow16Mode(mode)
-        else:
-            self.status['current_row16_mode'] = mode
-
-    @property
-    def testing_mode(self):
-        """Temporary testing mode"""
-        return self.status['testing_mode']
-
-    @testing_mode.setter
-    def testing_mode(self, state):
-        """Set the testing mode on the interface"""
-        self.check_if_busy()
-        self.status['testing_mode'] = True if state else False
 
     @property
     def is_working(self):
@@ -437,9 +520,9 @@ class InterfaceBase:
         self.status['pump'] = True if state else False
 
     @property
-    def is_casting(self):
-        """Check if interface is in casting mode"""
-        return self.operation_mode == CASTING
+    def punch_mode(self):
+        """Check if interface is in punching mode"""
+        return self.status.get('punch_mode')
 
     @property
     def signals(self):
@@ -500,21 +583,6 @@ class InterfaceBase:
             # not enough events / measurement points
             return 0
 
-    def check_if_busy(self):
-        """Check if the interface is already working. If so,
-        raise InterfaceBusy."""
-        if self.is_working:
-            message = 'Cannot do that - the machine is already working.'
-            raise librpi2caster.InterfaceBusy(message)
-
-    def check_rotation(self, revolutions=3):
-        """Check whether the machine is turning.
-        The machine must typically go 3 revolutions of the main shaft."""
-        timeout = self.config['startup_timeout']
-        for _ in range(revolutions, 0, -1):
-            self.wait_for_sensor(ON, timeout=timeout)
-            self.wait_for_sensor(OFF, timeout=timeout)
-
     def update_pump_and_wedges(self):
         """Check the wedge positions and return them."""
         def found(code):
@@ -554,7 +622,7 @@ class Interface(InterfaceBase):
     gpios = None
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
                             error_led=GPIO.OUT, working_led=GPIO.OUT,
-                            air=GPIO.OUT, water=GPIO.OUT,
+                            air=GPIO.OUT, water=GPIO.OUT, mode_detect=GPIO.IN,
                             motor_stop=GPIO.OUT, motor_start=GPIO.OUT)
 
     def __init__(self, config_dict):
@@ -594,6 +662,10 @@ class Interface(InterfaceBase):
         else:
             self.config['has_motor_control'] = False
 
+        # use a GPIO pin for sensing punch/cast mode
+        mode_detect_gpio = self.gpios['mode_detect']
+        self.status['punch_mode'] = get_state(mode_detect_gpio)
+
         with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
             GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.RISING,
@@ -629,9 +701,12 @@ class Interface(InterfaceBase):
                                                    .format(output_name))
 
     @handle_machine_stop
-    def start(self):
+    def start(self, testing_mode=False):
         """Starts the machine. When casting, check if it's running."""
-        self.check_if_busy()
+        # check if the interface is already busy
+        if self.is_working:
+            message = 'Cannot do that - the machine is already working.'
+            raise librpi2caster.InterfaceBusy(message)
         # reset the RPM counter
         self.meter_events.clear()
         # reset the emergency stop status
@@ -639,25 +714,34 @@ class Interface(InterfaceBase):
         # turn on the compressed air
         with suppress(NotImplementedError):
             self.air_control(ON)
-        # make sure the machine is turning before proceeding
-        if self.is_casting and not self.testing_mode:
+        if self.punch_mode or testing_mode:
+            # can start working right away
+            pass
+        else:
             # turn on the cooling water and motor, check the machine rotation
             # if MachineStopped is raised, it'll bubble up from here
             with suppress(NotImplementedError):
                 self.water_control(ON)
             with suppress(NotImplementedError):
                 self.motor_control(ON)
-            self.check_rotation()
+            # check machine rotation
+            timeout = self.config['startup_timeout']
+            for _ in range(3, 0, -1):
+                self.wait_for_sensor(ON, timeout=timeout)
+                self.wait_for_sensor(OFF, timeout=timeout)
         # properly initialized => mark it as working
         self.is_working = True
 
-    def stop(self):
+    def stop(self, testing_mode=False):
         """Stop the machine, making sure that the pump is disengaged."""
         if self.is_working:
             self.pump_control(OFF)
             self.valves_control(OFF)
             self.signals = []
-            if self.is_casting and not self.testing_mode:
+            if self.punch_mode or testing_mode:
+                # turn off the air only
+                pass
+            else:
                 # turn off the motor
                 with suppress(NotImplementedError):
                     self.motor_control(OFF)
@@ -669,7 +753,6 @@ class Interface(InterfaceBase):
                 self.air_control(OFF)
             # release the interface so others can claim it
             self.is_working = False
-        self.testing_mode = False
 
     def machine_control(self, state=None):
         """Machine and interface control.
@@ -696,9 +779,7 @@ class Interface(InterfaceBase):
             self.output.valves_off()
         else:
             # got the signals
-            parse = librpi2caster.parse_signals
-            codes = parse(state, self.operation_mode,
-                          self.row16_mode, self.testing_mode)
+            codes = parse_signals(state)
             self.output.valves_on(codes)
             self.signals = codes
             self.update_pump_and_wedges()
@@ -849,7 +930,7 @@ class Interface(InterfaceBase):
                 self.send_signals('NKS 0075 {}'.format(new_0075))
                 self.send_signals('NJS 0005 {}'.format(new_0005))
 
-    def send_signals(self, signals, repetitions=None, timeout=None):
+    def send_signals(self, signals, timeout=None, testing_mode=False):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -859,61 +940,53 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
+        @handle_machine_stop
+        def cast(codes):
+            """Monotype composition caster.
+
+            Wait for sensor to go ON, turn on the valves,
+            wait for sensor to go OFF, turn off the valves.
+            """
+            if not self.is_working:
+                raise librpi2caster.InterfaceNotStarted
+
+            # allow the use of a custom timeout
+            wait = timeout or self.config['sensor_timeout']
+            # machine control cycle
+            self.wait_for_sensor(ON, timeout=wait)
+            self.valves_control(codes)
+            self.wait_for_sensor(OFF, timeout=wait)
+            self.valves_control(OFF)
+
+        @handle_machine_stop
+        def test(codes):
+            """Turn off any previous combination, then send signals."""
+            if not self.is_working:
+                self.start(ON)
+
+            # change the active combination
+            self.valves_control(OFF)
+            self.valves_control(codes)
+
+        @handle_machine_stop
+        def punch(codes):
+            """Timer-driven ribbon perforator."""
+            if not self.is_working:
+                self.start()
+
+            # timer-driven operation
+            self.valves_control(codes)
+            time.sleep(self.config['punching_on_time'])
+            self.valves_control(OFF)
+            time.sleep(self.config['punching_off_time'])
+
         if not signals:
             # this tells the interface to turn off all the valves
             self.valves_control(OFF)
             return
-        cast = partial(self.cast, timeout=timeout)
-        send_routine = (self.test if self.testing_mode
-                        else cast if self.is_casting else self.punch)
-        for _ in range(repetitions or 1):
-            send_routine(signals)
+        method = test if testing_mode else punch if self.punch_mode else cast
+        method(signals)
 
-    @handle_machine_stop
-    def cast(self, codes, timeout=None):
-        """Monotype composition caster.
-
-        Wait for sensor to go ON, turn on the valves,
-        wait for sensor to go OFF, turn off the valves.
-        """
-        if not self.is_working:
-            raise librpi2caster.InterfaceNotStarted
-
-        # allow the use of a custom timeout
-        timeout = timeout or self.config['sensor_timeout']
-        # machine control cycle
-        self.wait_for_sensor(ON, timeout=timeout)
-        self.valves_control(codes)
-        self.wait_for_sensor(OFF, timeout=timeout)
-        self.valves_control(OFF)
-
-    @handle_machine_stop
-    def test(self, codes):
-        """Turn off any previous combination, then send signals.
-        """
-        if not self.is_working:
-            self.start(ON)
-
-        # change the active combination
-        self.valves_control(OFF)
-        self.valves_control(codes)
-
-    @handle_machine_stop
-    def punch(self, codes):
-        """Timer-driven ribbon perforator.
-
-        Turn on the valves, wait the "punching_on_time",
-        then turn off the valves and wait for them to go down
-        ("punching_off_time").
-        """
-        if not self.is_working:
-            self.start()
-
-        # timer-driven operation
-        self.valves_control(codes)
-        time.sleep(self.config['punching_on_time'])
-        self.valves_control(OFF)
-        time.sleep(self.config['punching_off_time'])
 
 if __name__ == '__main__':
     main()
