@@ -13,11 +13,11 @@ import configparser
 import signal
 import subprocess
 import time
-import RPi.GPIO as GPIO
 
+import librpi2caster
 from flask import Flask, abort, jsonify
 from flask.globals import request
-import librpi2caster
+import RPi.GPIO as GPIO
 
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 ON, OFF = True, False
@@ -160,8 +160,7 @@ def parse_signals(input_signals):
             # required for correct parsing of numbers
             source = source.replace(string, '')
             return True
-        else:
-            return False
+        return False
 
     try:
         source = input_signals.upper()
@@ -312,11 +311,11 @@ def handle_request(routine):
     """Boilerplate code for the flask API functions,
     used for handling requests to interfaces."""
     @wraps(routine)
-    def wrapper(*args, **kwargs):
+    def wrapper(webapi, *args, **kwargs):
         """wraps the routine"""
         try:
             # does the function return any json-ready parameters?
-            outcome = routine(*args, **kwargs) or dict()
+            outcome = webapi.routine(*args, **kwargs) or dict()
             # if caught no exceptions, all went well => return success
             return jsonify(OrderedDict(success=True, **outcome))
         except KeyError:
@@ -327,108 +326,11 @@ def handle_request(routine):
                 librpi2caster.InterfaceBusy,
                 librpi2caster.MachineStopped) as exception:
             # HTTP response with an error code
-            return jsonify(OrderedDict(error_name=exception.name,
+            return jsonify(OrderedDict(error_name=exception.message,
                                        error_code=exception.code,
                                        offending_value=str(exception) or None,
                                        success=False))
     return wrapper
-
-
-def webapi(interface, address, port):
-    """Web API for controlling the interface."""
-    app = Flask('rpi2caster')
-
-    @app.route('/', methods=ALL_METHODS)
-    @handle_request
-    def index():
-        """Get the read-only information about the interface.
-        Return the JSON-encoded dictionary with
-            status: current interface state,
-            settings: static configuration (in /etc/rpi2casterd.conf)
-        """
-        if request.method in (POST, PUT):
-            request_data = request.get_json()
-            print(request_data)
-        return dict(status=interface.current_status, settings=interface.config)
-
-    @app.route('/justification', methods=ALL_METHODS)
-    @handle_request
-    def justification():
-        """GET: get the current 0005 and 0075 justifying wedge positions,
-        PUT/POST: set new wedge positions (if position is None, keep current),
-        DELETE: reset wedges to 15/15."""
-        if request.method in (PUT, POST):
-            request_data = request.get_json()
-            wedge_0075 = request_data.get('wedge_0075')
-            wedge_0005 = request_data.get('wedge_0005')
-            galley_trip = request_data.get('galley_trip')
-            interface.justification(wedge_0005, wedge_0075, galley_trip)
-        elif request.method == DELETE:
-            interface.justification(wedge_0005=15, wedge_0075=15,
-                                    galley_trip=False)
-
-        # get the current wedge positions
-        current_0075 = interface.status['wedge_0075']
-        current_0005 = interface.status['wedge_0005']
-        return dict(wedge_0005=current_0005, wedge_0075=current_0075)
-
-    @app.route('/signals', methods=ALL_METHODS)
-    @handle_request
-    def signals():
-        """Sends the signals to the machine.
-        GET: gets the current signals,
-        PUT/POST: sends the signals to the machine;
-            the interface will parse and process them according to the current
-            operation and row 16 addressing mode."""
-        if request.method == GET:
-            return dict(signals=interface.signals)
-        elif request.method in (POST, PUT):
-            request_data = request.get_json() or {}
-            codes = request_data.get('signals') or []
-            timeout = request_data.get('timeout')
-            testing_mode = request_data.get('testing_mode')
-            interface.send_signals(codes, timeout, testing_mode)
-        elif request.method == DELETE:
-            interface.valves_control(OFF)
-        return interface.current_status
-
-    @app.route('/<device_name>', methods=ALL_METHODS)
-    @handle_request
-    def control(device_name):
-        """Change or check the status of one of the
-        machine/interface's controls:
-            -caster's pump,
-            -caster's motor (using two relays),
-            -compressed air supply,
-            -cooling water supply,
-            -solenoid valves.
-
-        GET checks the device's state.
-        DELETE turns the device off (sends False).
-        POST or PUT requests turn the device on (state=True), off (state=False)
-        or check the device's state (state=None or not specified).
-        """
-        # find a suitable interface method, otherwise it's not implemented
-        # handle_request will reply 501
-        method_name = '{}_control'.format(device_name)
-        try:
-            routine = getattr(interface, method_name)
-        except AttributeError:
-            raise NotImplementedError
-        # we're sure that we have a method
-        if request.method in (POST, PUT):
-            device_state = request.get_json().get(device_name)
-            result = routine(device_state)
-        elif request.method == DELETE:
-            result = routine(OFF)
-        elif request.method == GET:
-            result = routine()
-        return dict(active=result)
-
-    if not interface:
-        print('Interface initialization failed. Not starting web API!')
-        return
-    app.run(address, port)
 
 
 def main():
@@ -452,7 +354,8 @@ def main():
         ready_led_gpio = LEDS.get('ready')
         turn_on(ready_led_gpio)
         # start the web application
-        webapi(interface, address, port)
+        webapi = WebAPI(interface, address, port)
+        webapi.run()
 
     except (OSError, PermissionError, RuntimeError) as exception:
         print('ERROR: Not enough privileges to do this.')
@@ -467,11 +370,117 @@ def main():
     finally:
         # make sure the GPIOs are de-configured properly
         interface.stop()
-        for led_name, led_gpio in LEDS.items():
+        for led_gpio in LEDS.values():
             turn_off(led_gpio)
-        LEDS[led_name] = None
         LEDS.clear()
         GPIO.cleanup()
+
+
+class WebAPI:
+    """JSON web API for communicating with the casting software."""
+    app = Flask('rpi2casterd')
+
+    def __init__(self, interface, address, port):
+        if not interface:
+            msg = 'Interface initialization failed. Not starting web API!'
+            raise librpi2caster.ConfigurationError(msg)
+        self.interface = interface
+        self.address = address
+        self.port = port
+
+    def run(self):
+        """Starts the interface"""
+        self.app.run(self.address, self.port)
+
+    @app.route('/', methods=ALL_METHODS)
+    @handle_request
+    def index(self):
+        """Get the read-only information about the interface.
+        Return the JSON-encoded dictionary with
+            status: current interface state,
+            settings: static configuration (in /etc/rpi2casterd.conf)
+        """
+        if request.method in (POST, PUT):
+            request_data = request.get_json()
+            print(request_data)
+        return dict(status=self.interface.current_status,
+                    settings=self.interface.config)
+
+    @app.route('/justification', methods=ALL_METHODS)
+    @handle_request
+    def justification(self):
+        """GET: get the current 0005 and 0075 justifying wedge positions,
+        PUT/POST: set new wedge positions (if position is None, keep current),
+        DELETE: reset wedges to 15/15."""
+        if request.method in (PUT, POST):
+            request_data = request.get_json()
+            wedge_0075 = request_data.get('wedge_0075')
+            wedge_0005 = request_data.get('wedge_0005')
+            galley_trip = request_data.get('galley_trip')
+            self.interface.justification(wedge_0005, wedge_0075, galley_trip)
+        elif request.method == DELETE:
+            self.interface.justification(wedge_0005=15, wedge_0075=15,
+                                         galley_trip=False)
+
+        # get the current wedge positions
+        current_0075 = self.interface.status['wedge_0075']
+        current_0005 = self.interface.status['wedge_0005']
+        return dict(wedge_0005=current_0005, wedge_0075=current_0075)
+
+    @app.route('/signals', methods=ALL_METHODS)
+    @handle_request
+    def signals(self):
+        """Sends the signals to the machine.
+        GET: gets the current signals,
+        PUT/POST: sends the signals to the machine;
+            the interface will parse and process them according to the current
+            operation and row 16 addressing mode."""
+        if request.method == GET:
+            return dict(signals=self.interface.signals)
+        if request.method in (POST, PUT):
+            request_data = request.get_json() or {}
+            codes = request_data.get('signals') or []
+            timeout = request_data.get('timeout')
+            testing_mode = request_data.get('testing_mode')
+            self.interface.send_signals(codes, timeout, testing_mode)
+            return self.interface.current_status
+        if request.method == DELETE:
+            self.interface.valves_control(OFF)
+            return self.interface.current_status
+        return {}
+
+    @app.route('/<device_name>', methods=ALL_METHODS)
+    @handle_request
+    def control(self, device_name):
+        """Change or check the status of one of the
+        machine/interface's controls:
+            -caster's pump,
+            -caster's motor (using two relays),
+            -compressed air supply,
+            -cooling water supply,
+            -solenoid valves.
+
+        GET checks the device's state.
+        DELETE turns the device off (sends False).
+        POST or PUT requests turn the device on (state=True), off (state=False)
+        or check the device's state (state=None or not specified).
+        """
+        # find a suitable interface method, otherwise it's not implemented
+        # handle_request will reply 501
+        method_name = '{}_control'.format(device_name)
+        try:
+            routine = getattr(self.interface, method_name)
+        except AttributeError:
+            raise NotImplementedError
+        # we're sure that we have a method
+        if request.method in (POST, PUT):
+            device_state = request.get_json().get(device_name)
+            result = routine(device_state)
+        elif request.method == DELETE:
+            result = routine(OFF)
+        elif request.method == GET:
+            result = routine()
+        return dict(active=result)
 
 
 class InterfaceBase:
@@ -616,8 +625,7 @@ class InterfaceBase:
 
 class Interface(InterfaceBase):
     """Hardware control interface"""
-    output = None
-    gpios = None
+    output, gpios = None, dict()
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
                             error_led=GPIO.OUT, working_led=GPIO.OUT,
                             air=GPIO.OUT, water=GPIO.OUT, mode_detect=GPIO.IN,
@@ -645,38 +653,36 @@ class Interface(InterfaceBase):
             print('Emergency stop button pressed!')
 
         # set up the controls
-        self.gpios = dict()
+        gpios = dict()
         for gpio_name, direction in self.gpio_definitions.items():
             gpio_config_name = '{}_gpio'.format(gpio_name)
             gpio_number = config[gpio_config_name]
-            self.gpios[gpio_name] = gpio_number
+            gpios[gpio_name] = gpio_number
             # skip 0 or None
             if gpio_number:
                 GPIO.setup(gpio_number, direction)
 
         # does the interface offer the motor start/stop capability?
-        if self.gpios.get('motor_start') and self.gpios.get('motor_stop'):
-            self.config['has_motor_control'] = True
-        else:
-            self.config['has_motor_control'] = False
+        motor_feature = gpios.get('motor_start') and gpios.get('motor_stop')
+        self.config['has_motor_control'] = motor_feature
 
         # use a GPIO pin for sensing punch/cast mode
-        mode_detect_gpio = self.gpios['mode_detect']
+        mode_detect_gpio = gpios['mode_detect']
         self.status['punch_mode'] = get_state(mode_detect_gpio)
 
         with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
-            GPIO.add_event_detect(self.gpios['emergency_stop'], GPIO.RISING,
+            GPIO.add_event_detect(gpios['emergency_stop'], GPIO.RISING,
                                   callback=update_emergency_stop,
                                   bouncetime=config['debounce_milliseconds'])
         try:
             # register a callback to update the RPM meter
-            GPIO.add_event_detect(self.gpios['sensor'], GPIO.BOTH,
+            GPIO.add_event_detect(gpios['sensor'], GPIO.BOTH,
                                   callback=update_sensor,
                                   bouncetime=config['debounce_milliseconds'])
         except RuntimeError:
             # event already registered
-            GPIO.add_event_callback(self.gpios['sensor'], update_sensor)
+            GPIO.add_event_callback(gpios['sensor'], update_sensor)
         except TypeError:
             # sensor is not necessary for e.g. perforator interfaces
             pass
@@ -697,6 +703,7 @@ class Interface(InterfaceBase):
         except ImportError:
             raise librpi2caster.ConfigurationError('{}: module not installed'
                                                    .format(output_name))
+        self.gpios = gpios
 
     @handle_machine_stop
     def start(self, testing_mode=False):
@@ -790,7 +797,7 @@ class Interface(InterfaceBase):
             anything evaluating to True or False = turn on or off"""
         if state is None:
             # do nothing
-            return self.status['motor']
+            retval = self.status['motor']
         elif state:
             start_gpio = self.gpios['motor_start']
             if start_gpio:
@@ -798,7 +805,7 @@ class Interface(InterfaceBase):
                 time.sleep(0.5)
                 turn_off(start_gpio)
             self.status['motor'] = ON
-            return ON
+            retval = ON
         else:
             stop_gpio = self.gpios['motor_stop']
             if stop_gpio:
@@ -807,37 +814,40 @@ class Interface(InterfaceBase):
                 turn_off(stop_gpio)
             self.status['motor'] = OFF
             self.meter_events.clear()
-            return OFF
+            retval = OFF
+        return retval
 
     def air_control(self, state=None):
         """Air supply control: master compressed air solenoid valve.
             no state or None = get the air state,
             anything evaluating to True or False = turn on or off"""
         if state is None:
-            return self.status['air']
+            retval = self.status['air']
         elif state:
             turn_on(self.gpios['air'], raise_exception=True)
             self.status['air'] = ON
-            return ON
+            retval = ON
         else:
             turn_off(self.gpios['air'], raise_exception=True)
             self.status['air'] = OFF
-            return OFF
+            retval = OFF
+        return retval
 
     def water_control(self, state=None):
         """Cooling water control:
             no state or None = get the water valve state,
             anything evaluating to True or False = turn on or off"""
         if state is None:
-            return self.status['water']
+            retval = self.status['water']
         elif state:
             turn_on(self.gpios['water'], raise_exception=True)
             self.status['water'] = ON
-            return ON
+            retval = ON
         else:
             turn_off(self.gpios['water'], raise_exception=True)
             self.status['water'] = OFF
-            return OFF
+            retval = OFF
+        return retval
 
     @handle_machine_stop
     def pump_control(self, state=None):
