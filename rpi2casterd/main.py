@@ -339,27 +339,18 @@ def main():
     app = Flask('rpi2caster')
     interface = None
 
-    @app.route('/')
+    @app.route('/', methods=ALL_METHODS)
     @handle_request
     def index():
         """Get the read-only information about the interface.
-        Return the JSON-encoded dictionary with:
-            name: interface name
+        Return the JSON-encoded dictionary with
             status: current interface state,
             settings: static configuration (in /etc/rpi2casterd.conf)
         """
+        if request.method in (POST, PUT):
+            request_data = request.get_json()
+            print(request_data)
         return dict(status=interface.current_status, settings=interface.config)
-
-    @app.route('/', methods=(POST, PUT))
-    @handle_request
-    def handle_interface():
-        """Send information to the interface.
-            Accepts the request parameters:
-            testing_mode [True/False] - set the testing mode
-        """
-        request_data = request.get_json()
-        interface.testing_mode = request_data.get('testing_mode')
-        return interface.current_status
 
     @app.route('/justification', methods=ALL_METHODS)
     @handle_request
@@ -754,7 +745,7 @@ class Interface(InterfaceBase):
             # release the interface so others can claim it
             self.is_working = False
 
-    def machine_control(self, state=None):
+    def machine_control(self, state=None, testing_mode=False):
         """Machine and interface control.
         If no state or state is None, return the current working state.
         If state evaluates to True, start the machine.
@@ -763,9 +754,9 @@ class Interface(InterfaceBase):
         if state is None:
             pass
         elif state:
-            self.start()
+            self.start(testing_mode)
         else:
-            self.stop()
+            self.stop(testing_mode)
         return self.is_working
 
     def valves_control(self, state=None):
