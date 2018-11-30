@@ -308,11 +308,11 @@ def handle_request(routine):
     """Boilerplate code for the flask API functions,
     used for handling requests to interfaces."""
     @wraps(routine)
-    def wrapper(webapi, *args, **kwargs):
+    def wrapper(*args, **kwargs):
         """wraps the routine"""
         try:
             # does the function return any json-ready parameters?
-            outcome = routine(webapi, *args, **kwargs) or dict()
+            outcome = routine(*args, **kwargs) or dict()
             # if caught no exceptions, all went well => return success
             return jsonify(OrderedDict(success=True, **outcome))
         except KeyError:
@@ -326,6 +326,106 @@ def handle_request(routine):
                                        error_code=exc.code,
                                        offending_value=str(exc) or None))
     return wrapper
+
+
+def webapi(interface, address, port):
+    """JSON web API for communicating with the casting software."""
+    app = Flask('rpi2casterd')
+
+    @app.route('/', methods=('GET', 'PUT', 'POST', 'DELETE'))
+    @handle_request
+    def index():
+        """Get the read-only information about the interface.
+        Return the JSON-encoded dictionary with
+            status: current interface state,
+            settings: static configuration (in /etc/rpi2casterd.conf)
+        """
+        if request.method in (POST, PUT):
+            request_data = request.get_json()
+            print(request_data)
+        return dict(status=interface.current_status,
+                    config=interface.config)
+
+    @app.route('/justification', methods=('GET', 'PUT', 'POST', 'DELETE'))
+    @handle_request
+    def justification():
+        """GET: get the current 0005 and 0075 justifying wedge positions,
+        PUT/POST: set new wedge positions (if position is None, keep current),
+        DELETE: reset wedges to 15/15."""
+        if request.method in (PUT, POST):
+            request_data = request.get_json()
+            wedge_0075 = request_data.get('wedge_0075')
+            wedge_0005 = request_data.get('wedge_0005')
+            galley_trip = request_data.get('galley_trip')
+            interface.justification(wedge_0005, wedge_0075, galley_trip)
+        elif request.method == DELETE:
+            interface.justification(wedge_0005=15, wedge_0075=15,
+                                    galley_trip=False)
+
+        # get the current wedge positions
+        current_0075 = interface.status['wedge_0075']
+        current_0005 = interface.status['wedge_0005']
+        return dict(wedge_0005=current_0005, wedge_0075=current_0075)
+
+    @app.route('/signals', methods=('GET', 'PUT', 'POST', 'DELETE'))
+    @handle_request
+    def signals():
+        """Sends the signals to the machine.
+        GET: gets the current signals,
+        PUT/POST: sends the signals to the machine;
+            the interface will parse and process them according to the current
+            operation and row 16 addressing mode."""
+        if request.method == GET:
+            return dict(signals=interface.signals)
+        if request.method in (POST, PUT):
+            request_data = request.get_json() or {}
+            codes = request_data.get('signals') or []
+            timeout = request_data.get('timeout')
+            testing_mode = request_data.get('testing_mode')
+            interface.send_signals(codes, timeout, testing_mode)
+            return interface.current_status
+        if request.method == DELETE:
+            interface.valves_control(OFF)
+            return interface.current_status
+        return {}
+
+    @app.route('/<device_name>', methods=('GET', 'PUT', 'POST', 'DELETE'))
+    @handle_request
+    def control(device_name):
+        """Change or check the status of one of the
+        machine/interface's controls:
+            -caster's pump,
+            -caster's motor (using two relays),
+            -compressed air supply,
+            -cooling water supply,
+            -solenoid valves.
+
+        GET checks the device's state.
+        DELETE turns the device off (sends False).
+        POST or PUT requests turn the device on (state=True), off (state=False)
+        or check the device's state (state=None or not specified).
+        """
+        # find a suitable interface method, otherwise it's not implemented
+        # handle_request will reply 501
+        method_name = '{}_control'.format(device_name)
+        try:
+            routine = getattr(interface, method_name)
+        except AttributeError:
+            raise NotImplementedError
+        # we're sure that we have a method
+        if request.method in (POST, PUT):
+            device_state = request.get_json().get(device_name)
+            result = routine(device_state)
+        elif request.method == DELETE:
+            result = routine(OFF)
+        elif request.method == GET:
+            result = routine()
+        return dict(active=result)
+
+    if not interface:
+        msg = 'Interface initialization failed. Not starting web API!'
+        raise librpi2caster.ConfigurationError(msg)
+    app.run(address, port)
 
 
 def main():
@@ -345,8 +445,7 @@ def main():
         ready_led_gpio = LEDS.get('ready')
         turn_on(ready_led_gpio)
         # start the web application
-        webapi = WebAPI(interface, address, port)
-        webapi.run()
+        webapi(interface, address, port)
 
     except KeyError as exception:
         raise librpi2caster.ConfigurationError(exception)
@@ -369,113 +468,6 @@ def main():
             turn_off(led_gpio)
         LEDS.clear()
         GPIO.cleanup()
-
-
-class WebAPI:
-    """JSON web API for communicating with the casting software."""
-    app = Flask('rpi2casterd')
-
-    def __init__(self, interface, address, port):
-        if not interface:
-            msg = 'Interface initialization failed. Not starting web API!'
-            raise librpi2caster.ConfigurationError(msg)
-        self.interface = interface
-        self.address = address
-        self.port = port
-
-    def run(self):
-        """Starts the interface"""
-        self.app.run(self.address, self.port)
-
-    @app.route('/', methods=('GET', 'PUT', 'POST', 'DELETE'))
-    @handle_request
-    def index(self):
-        """Get the read-only information about the interface.
-        Return the JSON-encoded dictionary with
-            status: current interface state,
-            settings: static configuration (in /etc/rpi2casterd.conf)
-        """
-        if request.method in (POST, PUT):
-            request_data = request.get_json()
-            print(request_data)
-        return dict(status=self.interface.current_status,
-                    config=self.interface.config)
-
-    @app.route('/justification', methods=('GET', 'PUT', 'POST', 'DELETE'))
-    @handle_request
-    def justification(self):
-        """GET: get the current 0005 and 0075 justifying wedge positions,
-        PUT/POST: set new wedge positions (if position is None, keep current),
-        DELETE: reset wedges to 15/15."""
-        if request.method in (PUT, POST):
-            request_data = request.get_json()
-            wedge_0075 = request_data.get('wedge_0075')
-            wedge_0005 = request_data.get('wedge_0005')
-            galley_trip = request_data.get('galley_trip')
-            self.interface.justification(wedge_0005, wedge_0075, galley_trip)
-        elif request.method == DELETE:
-            self.interface.justification(wedge_0005=15, wedge_0075=15,
-                                         galley_trip=False)
-
-        # get the current wedge positions
-        current_0075 = self.interface.status['wedge_0075']
-        current_0005 = self.interface.status['wedge_0005']
-        return dict(wedge_0005=current_0005, wedge_0075=current_0075)
-
-    @app.route('/signals', methods=('GET', 'PUT', 'POST', 'DELETE'))
-    @handle_request
-    def signals(self):
-        """Sends the signals to the machine.
-        GET: gets the current signals,
-        PUT/POST: sends the signals to the machine;
-            the interface will parse and process them according to the current
-            operation and row 16 addressing mode."""
-        if request.method == GET:
-            return dict(signals=self.interface.signals)
-        if request.method in (POST, PUT):
-            request_data = request.get_json() or {}
-            codes = request_data.get('signals') or []
-            timeout = request_data.get('timeout')
-            testing_mode = request_data.get('testing_mode')
-            self.interface.send_signals(codes, timeout, testing_mode)
-            return self.interface.current_status
-        if request.method == DELETE:
-            self.interface.valves_control(OFF)
-            return self.interface.current_status
-        return {}
-
-    @app.route('/<device_name>', methods=('GET', 'PUT', 'POST', 'DELETE'))
-    @handle_request
-    def control(self, device_name):
-        """Change or check the status of one of the
-        machine/interface's controls:
-            -caster's pump,
-            -caster's motor (using two relays),
-            -compressed air supply,
-            -cooling water supply,
-            -solenoid valves.
-
-        GET checks the device's state.
-        DELETE turns the device off (sends False).
-        POST or PUT requests turn the device on (state=True), off (state=False)
-        or check the device's state (state=None or not specified).
-        """
-        # find a suitable interface method, otherwise it's not implemented
-        # handle_request will reply 501
-        method_name = '{}_control'.format(device_name)
-        try:
-            routine = getattr(self.interface, method_name)
-        except AttributeError:
-            raise NotImplementedError
-        # we're sure that we have a method
-        if request.method in (POST, PUT):
-            device_state = request.get_json().get(device_name)
-            result = routine(device_state)
-        elif request.method == DELETE:
-            result = routine(OFF)
-        elif request.method == GET:
-            result = routine()
-        return dict(active=result)
 
 
 class InterfaceBase:
