@@ -467,17 +467,26 @@ class InterfaceBase:
         self.config = config_dict
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
-        # was emergency stop triggered?
-        self.emergency_stop_state = OFF
         # temporary GPIO dict (can be populated in hardware_setup)
         self.gpios = dict(working_led=None)
         # initialize machine state
         self.status = dict(wedge_0005=15, wedge_0075=15,
                            working=OFF, water=OFF, air=OFF, motor=OFF,
-                           pump=OFF, sensor=OFF, signals=[])
+                           pump=OFF, sensor=OFF, signals=[],
+                           emergency_stop_state=OFF)
 
     def __str__(self):
         return self.config['name']
+
+    @property
+    def emergency_stop_state(self):
+        """Check whether emergency stop was triggered"""
+        return self.status['emergency_stop_state']
+
+    @emergency_stop_state.setter
+    def emergency_stop_state(self, state):
+        """Set the emergency stop state"""
+        self.status['emergency_stop_state'] = True if state else False
 
     @property
     def is_working(self):
