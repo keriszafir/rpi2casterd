@@ -473,7 +473,7 @@ class InterfaceBase:
         self.status = dict(wedge_0005=15, wedge_0075=15,
                            working=OFF, water=OFF, air=OFF, motor=OFF,
                            pump=OFF, sensor=OFF, signals=[],
-                           emergency_stop_state=OFF)
+                           emergency_stop=OFF)
 
     def __str__(self):
         return self.config['name']
@@ -481,12 +481,12 @@ class InterfaceBase:
     @property
     def emergency_stop_state(self):
         """Check whether emergency stop was triggered"""
-        return self.status['emergency_stop_state']
+        return self.status['emergency_stop']
 
     @emergency_stop_state.setter
     def emergency_stop_state(self, state):
         """Set the emergency stop state"""
-        self.status['emergency_stop_state'] = True if state else False
+        self.status['emergency_stop'] = True if state else False
 
     @property
     def is_working(self):
