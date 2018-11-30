@@ -322,14 +322,12 @@ def handle_request(routine):
             abort(404)
         except NotImplementedError:
             abort(501)
-        except (librpi2caster.InterfaceNotStarted,
-                librpi2caster.InterfaceBusy,
-                librpi2caster.MachineStopped) as exception:
+        except (librpi2caster.InterfaceNotStarted, librpi2caster.InterfaceBusy,
+                librpi2caster.MachineStopped) as exc:
             # HTTP response with an error code
-            return jsonify(OrderedDict(error_name=exception.message,
-                                       error_code=exception.code,
-                                       offending_value=str(exception) or None,
-                                       success=False))
+            return jsonify(OrderedDict(success=False, error_name=exc.message,
+                                       error_code=exc.code,
+                                       offending_value=str(exc) or None))
     return wrapper
 
 
@@ -342,14 +340,12 @@ def main():
         # initialize hardware
         daemon_setup()
         # interface configuration
-        for name, section in CFG.items():
-            if name.lower().startswith('interface'):
-                try:
-                    settings = parse_configuration(section)
-                    interface = Interface(settings)
-                    break
-                except KeyError as exception:
-                    raise librpi2caster.ConfigurationError(exception)
+        try:
+            section = CFG.get('Interface') or CFG.get('interface')
+            settings = parse_configuration(section)
+            interface = Interface(settings)
+        except KeyError as exception:
+            raise librpi2caster.ConfigurationError(exception)
         # all configured - it's ready to work
         ready_led_gpio = LEDS.get('ready')
         turn_on(ready_led_gpio)
@@ -392,7 +388,7 @@ class WebAPI:
         """Starts the interface"""
         self.app.run(self.address, self.port)
 
-    @app.route('/', methods=ALL_METHODS)
+    @app.route('/', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
     def index(self):
         """Get the read-only information about the interface.
@@ -406,7 +402,7 @@ class WebAPI:
         return dict(status=self.interface.current_status,
                     settings=self.interface.config)
 
-    @app.route('/justification', methods=ALL_METHODS)
+    @app.route('/justification', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
     def justification(self):
         """GET: get the current 0005 and 0075 justifying wedge positions,
@@ -427,7 +423,7 @@ class WebAPI:
         current_0005 = self.interface.status['wedge_0005']
         return dict(wedge_0005=current_0005, wedge_0075=current_0075)
 
-    @app.route('/signals', methods=ALL_METHODS)
+    @app.route('/signals', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
     def signals(self):
         """Sends the signals to the machine.
@@ -449,7 +445,7 @@ class WebAPI:
             return self.interface.current_status
         return {}
 
-    @app.route('/<device_name>', methods=ALL_METHODS)
+    @app.route('/<device_name>', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
     def control(self, device_name):
         """Change or check the status of one of the
@@ -494,7 +490,7 @@ class InterfaceBase:
         # temporary GPIO dict (can be populated in hardware_setup)
         self.gpios = dict(working_led=None)
         # initialize machine state
-        self.status = dict(wedge_0005=15, wedge_0075=15, punch_mode=False,
+        self.status = dict(wedge_0005=15, wedge_0075=15,
                            working=OFF, water=OFF, air=OFF, motor=OFF,
                            pump=OFF, sensor=OFF, signals=[])
 
@@ -529,7 +525,7 @@ class InterfaceBase:
     @property
     def punch_mode(self):
         """Check if interface is in punching mode"""
-        return self.status.get('punch_mode')
+        return self.config.get('punch_mode')
 
     @property
     def signals(self):
@@ -668,7 +664,7 @@ class Interface(InterfaceBase):
 
         # use a GPIO pin for sensing punch/cast mode
         mode_detect_gpio = gpios['mode_detect']
-        self.status['punch_mode'] = get_state(mode_detect_gpio)
+        self.config['punch_mode'] = get_state(mode_detect_gpio)
 
         with suppress(TypeError, RuntimeError):
             # register an event detection on emergency stop event
