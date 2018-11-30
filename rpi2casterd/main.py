@@ -154,25 +154,22 @@ def parse_signals(input_signals):
     and returns an arranged list of Monotype signals."""
     def is_present(value):
         """Detect and dispatch known signals in source string"""
-        nonlocal source
+        nonlocal sequence
         string = str(value)
-        if string in source:
+        if string in sequence:
             # required for correct parsing of numbers
-            source = source.replace(string, '')
+            sequence = sequence.replace(string, '')
             return True
         return False
 
     try:
-        source = input_signals.upper()
+        sequence = input_signals.upper()
     except AttributeError:
-        source = ''.join(str(x) for x in input_signals).upper()
+        sequence = ''.join(str(x) for x in input_signals).upper()
 
-    useful = ['0005', '0075', *(str(x) for x in range(16, 0, -1)),
+    useful = ['0005', '0075', 'O15', *(str(x) for x in range(15, 0, -1)),
               *'ABCDEFGHIJKLMNOS']
     parsed_signals = {s for s in useful if is_present(s)}
-    # change O and 15 to O15 which is needed for punching
-    parsed_signals.replace('O', 'O15')
-    parsed_signals.replace('15', 'O15')
     arranged = deque(s for s in OUTPUT_SIGNALS if s in parsed_signals)
     # put NI, NL, NK, NJ, NKJ etc. at the front
     if 'N' in arranged:
@@ -954,11 +951,13 @@ class Interface(InterfaceBase):
             if not self.is_working:
                 raise librpi2caster.InterfaceNotStarted
 
+            # skip O15 when casting
+            sigs = [s for s in codes if s != 'O15']
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
             self.wait_for_sensor(ON, timeout=wait)
-            self.valves_control(codes)
+            self.valves_control(sigs)
             self.wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
 
@@ -978,8 +977,10 @@ class Interface(InterfaceBase):
             if not self.is_working:
                 self.start()
 
+            # add missing O15 if less than 2 signals
+            sigs = codes if len(codes) >= 2 else [*codes, 'O15']
             # timer-driven operation
-            self.valves_control(codes)
+            self.valves_control(sigs)
             time.sleep(self.config['punching_on_time'])
             self.valves_control(OFF)
             time.sleep(self.config['punching_off_time'])
