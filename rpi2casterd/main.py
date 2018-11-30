@@ -615,7 +615,8 @@ class Interface(InterfaceBase):
     output, gpios = None, dict()
     gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
                             error_led=GPIO.OUT, working_led=GPIO.OUT,
-                            air=GPIO.OUT, water=GPIO.OUT, mode_detect=GPIO.IN,
+                            air=GPIO.OUT, water=GPIO.OUT,
+                            mode_detect=(GPIO.IN, GPIO.PUD_UP),
                             motor_stop=GPIO.OUT, motor_start=GPIO.OUT)
 
     def __init__(self, config_dict):
@@ -641,12 +642,16 @@ class Interface(InterfaceBase):
 
         # set up the controls
         gpios = dict()
-        for gpio_name, direction in self.gpio_definitions.items():
+        for gpio_name, parameters in self.gpio_definitions.items():
             gpio_config_name = '{}_gpio'.format(gpio_name)
             gpio_number = config[gpio_config_name]
             gpios[gpio_name] = gpio_number
             # skip 0 or None
-            if gpio_number:
+            try:
+                direction, pull = parameters
+                GPIO.setup(gpio_number, direction, pull_up_down=pull)
+            except TypeError:
+                direction = parameters
                 GPIO.setup(gpio_number, direction)
 
         # does the interface offer the motor start/stop capability?
