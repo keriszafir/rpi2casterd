@@ -52,6 +52,29 @@ GPIO.setmode(GPIO.BCM)
 LEDS = dict()
 
 
+def setup_gpio(name, direction, pull=None, callbk=None,
+               edge=GPIO.FALLING, bouncetime=50):
+    """Set up a GPIO input/output"""
+    gpio = get(name, CFG.defaults(), 'inone')
+    if gpio:
+        # set up an input or output
+        if pull:
+            GPIO.setup(gpio, direction, pull_up_down=pull)
+        else:
+            GPIO.setup(gpio, direction)
+
+        # try registering a callback function on interrupt
+        if callbk:
+            try:
+                GPIO.add_event_detect(gpio, edge, callbk,
+                                      bouncetime=bouncetime)
+            except RuntimeError:
+                GPIO.add_event_callback(gpio, callbk)
+            except TypeError:
+                pass
+    return gpio
+
+
 def turn_on(gpio, raise_exception=False):
     """Turn on a specified GPIO output"""
     if not gpio:
@@ -195,17 +218,6 @@ def parse_configuration(source):
     config['punching_on_time'] = get('punching_on_time', source, float)
     config['punching_off_time'] = get('punching_off_time', source, float)
 
-    # interface settings: control GPIOs
-    config['sensor_gpio'] = get('sensor_gpio', source, 'inone')
-    config['error_led_gpio'] = get('error_led_gpio', source, 'inone')
-    config['working_led_gpio'] = get('working_led_gpio', source, 'inone')
-    config['emergency_stop_gpio'] = get('emergency_stop_gpio', source, 'inone')
-    config['motor_start_gpio'] = get('motor_start_gpio', source, 'inone')
-    config['motor_stop_gpio'] = get('motor_stop_gpio', source, 'inone')
-    config['water_gpio'] = get('water_gpio', source, 'inone')
-    config['air_gpio'] = get('air_gpio', source, 'inone')
-    config['mode_detect_gpio'] = get('mode_detect_gpio', source, 'inone')
-
     # time (in milliseconds) for software debouncing
     debounce_milliseconds = get('debounce_milliseconds', source, int)
     config['debounce_milliseconds'] = debounce_milliseconds
@@ -274,26 +286,6 @@ def daemon_setup():
     def signal_handler(*_):
         """Exit gracefully if SIGINT or SIGTERM received"""
         raise KeyboardInterrupt
-
-    def setup_gpio(name, direction, pull=None, callbk=None, edge=GPIO.FALLING):
-        """Set up a GPIO input/output"""
-        gpio = get(name, CFG.defaults(), 'inone')
-        if gpio:
-            # set up an input or output
-            if pull:
-                GPIO.setup(gpio, direction, pull_up_down=pull)
-            else:
-                GPIO.setup(gpio, direction)
-
-            # try registering a callback function on interrupt
-            if callbk:
-                try:
-                    GPIO.add_event_detect(gpio, edge, callbk, bouncetime=50)
-                except RuntimeError:
-                    GPIO.add_event_callback(gpio, callbk)
-                except TypeError:
-                    pass
-        return gpio
 
     # set up the ready LED and shutdown/reboot buttons, if possible
     LEDS['ready'] = setup_gpio('ready_led_gpio', GPIO.OUT)
@@ -438,8 +430,7 @@ def main():
         # initialize hardware
         daemon_setup()
         # interface configuration
-        section = CFG['Interface']
-        settings = parse_configuration(section)
+        settings = parse_configuration(CFG.defaults())
         interface = Interface(settings)
         # all configured - it's ready to work
         ready_led_gpio = LEDS.get('ready')
@@ -613,11 +604,6 @@ class InterfaceBase:
 class Interface(InterfaceBase):
     """Hardware control interface"""
     output, gpios = None, dict()
-    gpio_definitions = dict(sensor=GPIO.IN, emergency_stop=GPIO.IN,
-                            error_led=GPIO.OUT, working_led=GPIO.OUT,
-                            air=GPIO.OUT, water=GPIO.OUT,
-                            mode_detect=(GPIO.IN, GPIO.PUD_UP),
-                            motor_stop=GPIO.OUT, motor_start=GPIO.OUT)
 
     def __init__(self, config_dict):
         super().__init__(config_dict)
@@ -640,44 +626,29 @@ class Interface(InterfaceBase):
             self.emergency_stop_state = get_state(emergency_stop_gpio)
             print('Emergency stop button pressed!')
 
-        # set up the controls
-        gpios = dict()
-        for gpio_name, parameters in self.gpio_definitions.items():
-            gpio_config_name = '{}_gpio'.format(gpio_name)
-            gpio_number = config[gpio_config_name]
-            gpios[gpio_name] = gpio_number
-            # skip 0 or None
-            try:
-                direction, pull = parameters
-                GPIO.setup(gpio_number, direction, pull_up_down=pull)
-            except TypeError:
-                direction = parameters
-                GPIO.setup(gpio_number, direction)
+        bouncetime = config['debounce_milliseconds']
+        gpios = dict(sensor=setup_gpio('sensor_gpio', GPIO.IN, edge=GPIO.BOTH,
+                                       callbk=update_sensor,
+                                       bouncetime=bouncetime),
+                     emergency_stop=setup_gpio('emergency_stop_gpio', GPIO.IN,
+                                               callbk=update_emergency_stop,
+                                               edge=GPIO.RISING,
+                                               bouncetime=bouncetime),
+                     mode_detect=setup_gpio('mode_detect_gpio',
+                                            GPIO.IN, GPIO.PUD_UP),
+                     error_led=setup_gpio('error_led_gpio', GPIO.OUT),
+                     working_led=setup_gpio('working_led_gpio', GPIO.OUT),
+                     air=setup_gpio('air_gpio', GPIO.OUT),
+                     water=setup_gpio('water_gpio', GPIO.OUT),
+                     motor_stop=setup_gpio('motor_stop_gpio', GPIO.OUT),
+                     motor_start=setup_gpio('motor_start_gpio', GPIO.OUT))
 
         # does the interface offer the motor start/stop capability?
         motor_feature = gpios.get('motor_start') and gpios.get('motor_stop')
         self.config['has_motor_control'] = motor_feature
 
         # use a GPIO pin for sensing punch/cast mode
-        mode_detect_gpio = gpios['mode_detect']
-        self.config['punch_mode'] = get_state(mode_detect_gpio)
-
-        with suppress(TypeError, RuntimeError):
-            # register an event detection on emergency stop event
-            GPIO.add_event_detect(gpios['emergency_stop'], GPIO.RISING,
-                                  callback=update_emergency_stop,
-                                  bouncetime=config['debounce_milliseconds'])
-        try:
-            # register a callback to update the RPM meter
-            GPIO.add_event_detect(gpios['sensor'], GPIO.BOTH,
-                                  callback=update_sensor,
-                                  bouncetime=config['debounce_milliseconds'])
-        except RuntimeError:
-            # event already registered
-            GPIO.add_event_callback(gpios['sensor'], update_sensor)
-        except TypeError:
-            # sensor is not necessary for e.g. perforator interfaces
-            pass
+        self.config['punch_mode'] = get_state(gpios['mode_detect'])
 
         # output setup:
         try:
