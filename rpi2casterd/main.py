@@ -886,7 +886,7 @@ class Interface(InterfaceBase):
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
         @handle_machine_stop
-        def cast(codes):
+        def cast(self, codes):
             """Monotype composition caster.
 
             Wait for sensor to go ON, turn on the valves,
@@ -906,7 +906,7 @@ class Interface(InterfaceBase):
             self.valves_control(OFF)
 
         @handle_machine_stop
-        def test(codes):
+        def test(self, codes):
             """Turn off any previous combination, then send signals."""
             if not self.is_working:
                 self.start(ON)
@@ -916,7 +916,7 @@ class Interface(InterfaceBase):
             self.valves_control(codes)
 
         @handle_machine_stop
-        def punch(codes):
+        def punch(self, codes):
             """Timer-driven ribbon perforator."""
             if not self.is_working:
                 self.start()
