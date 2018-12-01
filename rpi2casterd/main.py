@@ -8,7 +8,7 @@ using selectable backend libraries for greater configurability.
 """
 from collections import deque, OrderedDict
 from contextlib import suppress
-from functools import wraps
+from functools import partial, wraps
 import configparser
 import signal
 import subprocess
@@ -875,6 +875,7 @@ class Interface(InterfaceBase):
                 self.send_signals('NKS 0075 {}'.format(new_0075))
                 self.send_signals('NJS 0005 {}'.format(new_0005))
 
+    @handle_machine_stop
     def send_signals(self, signals, timeout=None, testing_mode=False):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
@@ -885,8 +886,7 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        @handle_machine_stop
-        def cast(self, codes):
+        def cast(codes, timeout):
             """Monotype composition caster.
 
             Wait for sensor to go ON, turn on the valves,
@@ -905,18 +905,16 @@ class Interface(InterfaceBase):
             self.wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
 
-        @handle_machine_stop
-        def test(self, codes):
+        def test(codes):
             """Turn off any previous combination, then send signals."""
             if not self.is_working:
-                self.start(ON)
+                self.start(testing_mode=True)
 
             # change the active combination
             self.valves_control(OFF)
             self.valves_control(codes)
 
-        @handle_machine_stop
-        def punch(self, codes):
+        def punch(codes):
             """Timer-driven ribbon perforator."""
             if not self.is_working:
                 self.start()
