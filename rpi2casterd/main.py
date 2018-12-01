@@ -165,7 +165,7 @@ def parse_configuration(source):
         with suppress(TypeError):
             return int(input_string, 0)
 
-    def get(parameter, convert):
+    def get(parameter, convert=lcstr):
         """Gets a value from a specified source for a given parameter,
         converts it to a desired data type"""
         return convert(source.get(parameter))
@@ -173,6 +173,7 @@ def parse_configuration(source):
     config = OrderedDict()
 
     # get timings
+    config['name'] = get('name')
     config['startup_timeout'] = get('startup_timeout', float)
     config['sensor_timeout'] = get('sensor_timeout', float)
     config['pump_stop_timeout'] = get('pump_stop_timeout', float)
@@ -183,7 +184,7 @@ def parse_configuration(source):
     config['debounce_milliseconds'] = get('debounce_milliseconds', int)
 
     # determine the output driver and settings
-    config['output_driver'] = get('output_driver', lcstr)
+    config['output_driver'] = get('output_driver')
     config['i2c_bus'] = get('i2c_bus', integer)
     config['mcp0_address'] = get('mcp0_address', integer)
     config['mcp1_address'] = get('mcp1_address', integer)
