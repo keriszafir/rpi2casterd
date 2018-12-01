@@ -886,7 +886,7 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        def cast(codes, timeout):
+        def cast(codes):
             """Monotype composition caster.
 
             Wait for sensor to go ON, turn on the valves,
