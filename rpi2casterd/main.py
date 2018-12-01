@@ -56,7 +56,7 @@ def setup_gpio(name, direction, pull=None, callbk=None,
                edge=GPIO.FALLING, bouncetime=50):
     """Set up a GPIO input/output"""
     gpio_string = CFG.defaults().get(name).strip()
-    with suppress(TypeError):
+    with suppress(TypeError, ValueError):
         gpio = int(gpio_string)
         if not gpio:
             return None
