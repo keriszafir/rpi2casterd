@@ -55,8 +55,11 @@ LEDS = dict()
 def setup_gpio(name, direction, pull=None, callbk=None,
                edge=GPIO.FALLING, bouncetime=50):
     """Set up a GPIO input/output"""
-    gpio = get(name, CFG.defaults(), 'inone')
-    if gpio:
+    gpio_string = CFG.defaults().get(name).strip()
+    with suppress(TypeError):
+        gpio = int(gpio_string)
+        if not gpio:
+            return None
         # set up an input or output
         if pull:
             GPIO.setup(gpio, direction, pull_up_down=pull)
@@ -72,27 +75,23 @@ def setup_gpio(name, direction, pull=None, callbk=None,
                 GPIO.add_event_callback(gpio, callbk)
             except TypeError:
                 pass
-    return gpio
+        return gpio
 
 
 def turn_on(gpio, raise_exception=False):
     """Turn on a specified GPIO output"""
-    if not gpio:
-        if raise_exception:
-            raise NotImplementedError
-        else:
-            return
-    GPIO.output(gpio, ON)
+    if gpio:
+        GPIO.output(gpio, ON)
+    elif raise_exception:
+        raise NotImplementedError
 
 
 def turn_off(gpio, raise_exception=False):
     """Turn off a specified GPIO output"""
-    if not gpio:
-        if raise_exception:
-            raise NotImplementedError
-        else:
-            return
-    GPIO.output(gpio, OFF)
+    if gpio:
+        GPIO.output(gpio, OFF)
+    elif raise_exception:
+        raise NotImplementedError
 
 
 def get_state(gpio):
@@ -106,70 +105,14 @@ def toggle(gpio):
     GPIO.output(gpio, not current_state)
 
 
-def blink(gpio=None, seconds=0.5, times=3):
+def ready_led_blink():
     """Blinks the LED"""
-    led_gpio = LEDS.get(gpio)
+    led_gpio = LEDS.get('ready')
     if not led_gpio:
         return
-    for _ in range(times * 2):
+    for _ in range(6):
         toggle(led_gpio)
-        time.sleep(seconds)
-
-
-def get(parameter, source, convert):
-    """Gets a value from a specified source for a given parameter,
-    converts it to a desired data type"""
-    def address_and_port(input_string):
-        """Get an IP or DNS address and a port"""
-        try:
-            address, _port = input_string.split(':')
-            port = int(_port)
-        except ValueError:
-            address = input_string
-            port = 23017
-        return address, port
-
-    def list_of_signals(input_string):
-        """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
-        Allow only known defined signals."""
-        raw = [x.strip().upper() for x in input_string.split(',')]
-        return [x for x in raw if x in OUTPUT_SIGNALS]
-
-    def list_of_strings(input_string):
-        """Convert 'abc , def, 012' -> ['abc', 'def', '012']
-        (no case change; strip whitespace)."""
-        return [x.strip() for x in input_string.split(',')]
-
-    def lowercase_string(input_string):
-        """Return a lowercase string stripped of all whitespace"""
-        return input_string.strip().lower()
-
-    def any_integer(input_string):
-        """Convert a decimal, octal, binary or hexadecimal string to integer"""
-        return int(lowercase_string(input_string), 0)
-
-    def int_or_none(input_string):
-        """Return integer or None"""
-        stripped = input_string.strip()
-        try:
-            return int(stripped)
-        except ValueError:
-            return None
-
-    def command(input_string):
-        """Operating system command: string -> accepted by subprocess.run"""
-        chunks = input_string.split(' ')
-        return [x.strip() for x in chunks]
-
-    converters = dict(anyint=any_integer, address=address_and_port,
-                      inone=int_or_none, signals=list_of_signals,
-                      lcstring=lowercase_string, strings=list_of_strings,
-                      command=command)
-    routine = converters.get(convert, convert)
-    # get the string from the source configuration
-    source_value = source[parameter]
-    # convert and return
-    return routine(source_value)
+        time.sleep(0.3)
 
 
 def parse_signals(input_signals):
@@ -207,31 +150,46 @@ def parse_signals(input_signals):
 
 def parse_configuration(source):
     """Get the interface parameters from a config parser section"""
+    def signals(input_string):
+        """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
+        Allow only known defined signals."""
+        raw = [x.strip().upper() for x in input_string.split(',')]
+        return [x for x in raw if x in OUTPUT_SIGNALS]
+
+    def lcstr(input_string):
+        """Return a lowercase string stripped of all whitespace"""
+        return input_string.strip().lower()
+
+    def integer(input_string):
+        """Convert a decimal, octal, binary or hexadecimal string to int"""
+        with suppress(TypeError):
+            return int(input_string, 0)
+
+    def get(parameter, convert):
+        """Gets a value from a specified source for a given parameter,
+        converts it to a desired data type"""
+        return convert(source.get(parameter))
+
     config = OrderedDict()
-    # determine the output driver
-    config['output_driver'] = get('output_driver', source, 'lcstring')
 
     # get timings
-    config['startup_timeout'] = get('startup_timeout', source, float)
-    config['sensor_timeout'] = get('sensor_timeout', source, float)
-    config['pump_stop_timeout'] = get('pump_stop_timeout', source, float)
-    config['punching_on_time'] = get('punching_on_time', source, float)
-    config['punching_off_time'] = get('punching_off_time', source, float)
+    config['startup_timeout'] = get('startup_timeout', float)
+    config['sensor_timeout'] = get('sensor_timeout', float)
+    config['pump_stop_timeout'] = get('pump_stop_timeout', float)
+    config['punching_on_time'] = get('punching_on_time', float)
+    config['punching_off_time'] = get('punching_off_time', float)
 
     # time (in milliseconds) for software debouncing
-    debounce_milliseconds = get('debounce_milliseconds', source, int)
-    config['debounce_milliseconds'] = debounce_milliseconds
+    config['debounce_milliseconds'] = get('debounce_milliseconds', int)
 
-    # interface settings: output
-    config['i2c_bus'] = get('i2c_bus', source, 'anyint')
-    config['mcp0_address'] = get('mcp0_address', source, 'anyint')
-    config['mcp1_address'] = get('mcp1_address', source, 'anyint')
-    config['signal_mappings'] = dict(valve1=get('valve1', source, 'signals'),
-                                     valve2=get('valve2', source, 'signals'),
-                                     valve3=get('valve3', source, 'signals'),
-                                     valve4=get('valve4', source, 'signals'))
-
-    # configuration ready to ship
+    # determine the output driver and settings
+    config['output_driver'] = get('output_driver', lcstr)
+    config['i2c_bus'] = get('i2c_bus', integer)
+    config['mcp0_address'] = get('mcp0_address', integer)
+    config['mcp1_address'] = get('mcp1_address', integer)
+    valves = dict(valve1=get('valve1', signals), valve2=get('valve2', signals),
+                  valve3=get('valve3', signals), valve4=get('valve4', signals))
+    config['signal_mappings'] = valves
     return config
 
 
@@ -263,25 +221,25 @@ def daemon_setup():
     """Configure the "ready" LED and shutdown/reboot buttons"""
     def shutdown(*_):
         """Shut the system down"""
+        command = CFG.defaults().get('shutdown_command')
         print('Shutdown button pressed. Hold down for 2s to shut down...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
         if not get_state(shdn):
             print('Shutting down...')
-            blink('ready')
-            cmd = get('shutdown_command', CFG.defaults(), 'command')
-            subprocess.run(cmd)
+            ready_led_blink()
+            subprocess.run([x.strip() for x in command.split(' ')])
 
     def reboot(*_):
         """Restart the system"""
+        command = CFG.defaults().get('reboot_command')
         print('Reboot button pressed. Hold down for 2s to reboot...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
         if not get_state(reset):
             print('Rebooting...')
-            blink('ready')
-            cmd = get('reboot_command', CFG.defaults(), 'command')
-            subprocess.run(cmd)
+            ready_led_blink()
+            subprocess.run([x.strip() for x in command.split(' ')])
 
     def signal_handler(*_):
         """Exit gracefully if SIGINT or SIGTERM received"""
@@ -320,11 +278,17 @@ def handle_request(routine):
     return wrapper
 
 
-def webapi(interface, address, port):
+def webapi(interface, listen_address):
     """JSON web API for communicating with the casting software."""
-    app = Flask('rpi2casterd')
+    def get_address_and_port():
+        """Get an IP or DNS address and a port"""
+        try:
+            address, _port = listen_address.split(':')
+            port = int(_port)
+        except ValueError:
+            address, port = listen_address, 23017
+        return address, port
 
-    @app.route('/', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
     def index():
         """Get the read-only information about the interface.
@@ -338,28 +302,21 @@ def webapi(interface, address, port):
         return dict(status=interface.current_status,
                     config=interface.config)
 
-    @app.route('/justification', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
-    def justification():
+    def wedges():
         """GET: get the current 0005 and 0075 justifying wedge positions,
         PUT/POST: set new wedge positions (if position is None, keep current),
         DELETE: reset wedges to 15/15."""
         if request.method in (PUT, POST):
             request_data = request.get_json()
-            wedge_0075 = request_data.get('wedge_0075')
-            wedge_0005 = request_data.get('wedge_0005')
-            galley_trip = request_data.get('galley_trip')
-            interface.justification(wedge_0005, wedge_0075, galley_trip)
+            interface.justification(**request_data)
         elif request.method == DELETE:
-            interface.justification(wedge_0005=15, wedge_0075=15,
-                                    galley_trip=False)
+            interface.justification(wedge_0005=15, wedge_0075=15)
 
         # get the current wedge positions
-        current_0075 = interface.status['wedge_0075']
-        current_0005 = interface.status['wedge_0005']
-        return dict(wedge_0005=current_0005, wedge_0075=current_0075)
+        return dict(wedge_0005=interface.status['wedge_0005'],
+                    wedge_0075=interface.status['wedge_0075'])
 
-    @app.route('/signals', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
     def signals():
         """Sends the signals to the machine.
@@ -381,9 +338,8 @@ def webapi(interface, address, port):
             return interface.current_status
         return {}
 
-    @app.route('/<device_name>', methods=('GET', 'PUT', 'POST', 'DELETE'))
     @handle_request
-    def control(device_name):
+    def control(device):
         """Change or check the status of one of the
         machine/interface's controls:
             -caster's pump,
@@ -399,14 +355,14 @@ def webapi(interface, address, port):
         """
         # find a suitable interface method, otherwise it's not implemented
         # handle_request will reply 501
-        method_name = '{}_control'.format(device_name)
+        method_name = '{}_control'.format(device)
         try:
             routine = getattr(interface, method_name)
         except AttributeError:
             raise NotImplementedError
         # we're sure that we have a method
         if request.method in (POST, PUT):
-            device_state = request.get_json().get(device_name)
+            device_state = request.get_json().get(device)
             result = routine(device_state)
         elif request.method == DELETE:
             result = routine(OFF)
@@ -417,26 +373,33 @@ def webapi(interface, address, port):
     if not interface:
         msg = 'Interface initialization failed. Not starting web API!'
         raise librpi2caster.ConfigurationError(msg)
+
+    app = Flask('rpi2casterd')
+    app.route('/', methods=('GET', 'PUT', 'POST', 'DELETE'))(index)
+    app.route('/wedges', methods=('GET', 'PUT', 'POST', 'DELETE'))(wedges)
+    app.route('/signals', methods=('GET', 'PUT', 'POST', 'DELETE'))(signals)
+    app.route('/<device>', methods=('GET', 'PUT', 'POST', 'DELETE'))(control)
+
+    address, port = get_address_and_port()
     app.run(address, port)
 
 
 def main():
     """Starts the application. Contains web API subroutines."""
     interface = None
+    config = CFG.defaults()
+    listen_address = config.get('listen_address')
     try:
-        # get the listen address and port
-        config = CFG.defaults()
-        address, port = get('listen_address', config, 'address')
         # initialize hardware
         daemon_setup()
         # interface configuration
-        settings = parse_configuration(CFG.defaults())
+        settings = parse_configuration(config)
         interface = Interface(settings)
         # all configured - it's ready to work
         ready_led_gpio = LEDS.get('ready')
         turn_on(ready_led_gpio)
         # start the web application
-        webapi(interface, address, port)
+        webapi(interface, listen_address)
 
     except KeyError as exception:
         raise librpi2caster.ConfigurationError(exception)
@@ -676,6 +639,7 @@ class Interface(InterfaceBase):
             raise librpi2caster.ConfigurationError('{}: module not installed'
                                                    .format(output_name))
         self.gpios = gpios
+        LEDS.update(error=gpios['error_led'], working=gpios['working_led'])
 
     @handle_machine_stop
     def start(self, testing_mode=False):
