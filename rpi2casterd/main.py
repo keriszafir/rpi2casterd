@@ -346,12 +346,12 @@ class InterfaceBase:
     @property
     def testing_mode(self):
         """Check if interface is in testing mode"""
-        return self.config.get('testing_mode')
+        return self.status.get('testing_mode')
 
     @testing_mode.setter
     def testing_mode(self, state):
         """Update the testing mode"""
-        self.config['testing_mode'] = bool(state)
+        self.status['testing_mode'] = bool(state)
 
     @property
     def signals(self):
