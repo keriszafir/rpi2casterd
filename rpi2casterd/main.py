@@ -674,7 +674,7 @@ class Interface(InterfaceBase):
             self.pump_control(OFF)
             self.valves_control(OFF)
             self.signals = []
-            if not any(self.punch_mode, self.testing_mode):
+            if not self.punch_mode and not self.testing_mode:
                 # turn off the motor and cooling water
                 self.motor_control(OFF)
                 self.water_control(OFF)
