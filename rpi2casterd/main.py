@@ -299,11 +299,11 @@ class InterfaceBase:
         # temporary GPIO dict (can be populated in hardware_setup)
         self.gpios = dict(working_led=None, error_led=None)
         # initialize machine state
-        self._status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
-                            machine=OFF, water=OFF, air=OFF, motor=OFF,
-                            pump=OFF, sensor=OFF, signals=[],
-                            emergency_stop=OFF, testing_mode=OFF,
-                            working_led=OFF, error_led=OFF)
+        self.status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
+                           machine=OFF, water=OFF, air=OFF, motor=OFF,
+                           pump=OFF, sensor=OFF, signals=[],
+                           emergency_stop=OFF, testing_mode=OFF,
+                           working_led=OFF, error_led=OFF)
         self.hardware_setup()
 
     def __str__(self):
@@ -371,17 +371,6 @@ class InterfaceBase:
         self.update_status(sensor=bool(state))
 
     @property
-    def status(self):
-        """Get the most current status."""
-        self.update_status(speed='{}rpm'.format(self.rpm()))
-        return self._status
-
-    @status.setter
-    def status(self, status):
-        """Chage the status"""
-        self.update_status(**status)
-
-    @property
     def emergency_stop(self):
         """Get the emergency stop state"""
         return self.status.get('emergency_stop')
@@ -408,6 +397,7 @@ class InterfaceBase:
         to the desired value (True or False).
         If no state change is registered in the given time,
         raise MachineStopped."""
+        print('Waiting for sensor state {}'.format(new_state))
         start_time = time.time()
         timeout = timeout if timeout else self.config['sensor_timeout']
         while self.sensor_state != new_state:
@@ -438,7 +428,7 @@ class InterfaceBase:
 
     def update_status(self, **kwargs):
         """Updates the machine status"""
-        self._status.update(**kwargs)
+        self.status.update(**kwargs)
 
     def update_pump_and_wedges(self):
         """Check the wedge positions and return them."""
@@ -522,7 +512,9 @@ class Interface(InterfaceBase):
             if request.method in (POST, PUT):
                 request_data = request.get_json() or {}
                 self.update_status(**request_data)
-            return self.status
+            status = self.status
+            status.update(speed='{}rpm'.format(self.rpm()))
+            return status
 
         @handle_request
         def config():
@@ -606,7 +598,8 @@ class Interface(InterfaceBase):
             """Check and update the emergency stop status"""
             state = get_state(emergency_stop_gpio)
             if state:
-                self.emergency_stop_control(ON)
+                print('Emergency stop button pressed!')
+                self.emergency_stop = ON
 
         bouncetime = self.config['debounce_milliseconds']
         gpios = dict(sensor=setup_gpio('sensor_gpio', GPIO.IN, edge=GPIO.BOTH,
@@ -694,6 +687,7 @@ class Interface(InterfaceBase):
                 with suppress(librpi2caster.MachineStopped):
                     print('Stopping the pump...')
                     self.pump_control(OFF)
+                    print('Pump stopped.')
             # turn all off
             self.valves_control(OFF)
             self.signals = []
@@ -895,6 +889,7 @@ class Interface(InterfaceBase):
             time.sleep(self.config['punching_off_time'])
 
         self.signals = signals
+        print('Sending signals: {}'.format(' '.join(self.signals)))
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
         rtn()
 
