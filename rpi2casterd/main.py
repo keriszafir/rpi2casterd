@@ -585,7 +585,9 @@ class Interface(InterfaceBase):
 
         def update_emergency_stop(emergency_stop_gpio):
             """Check and update the emergency stop status"""
-            self.emergency_stop_control(get_state(emergency_stop_gpio))
+            state = get_state(emergency_stop_gpio)
+            if state:
+                self.emergency_stop_control(ON)
 
         bouncetime = self.config['debounce_milliseconds']
         gpios = dict(sensor=setup_gpio('sensor_gpio', GPIO.IN, edge=GPIO.BOTH,
