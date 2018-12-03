@@ -316,10 +316,6 @@ class InterfaceBase:
     @is_working.setter
     def is_working(self, state):
         """Set the machine working state"""
-        if state:
-            turn_on(self.gpios['working_led'])
-        else:
-            turn_off(self.gpios['working_led'])
         self.update_status(machine=bool(state))
 
     @property
@@ -639,6 +635,9 @@ class Interface(InterfaceBase):
         if self.is_working:
             message = 'Cannot do that - the machine is already working.'
             raise librpi2caster.InterfaceBusy(message)
+        self.is_working = True
+        self.working_led(ON)
+        self.error_led(ON)
         # reset the RPM counter
         self.meter_events.clear()
         # turn on the compressed air
@@ -657,11 +656,13 @@ class Interface(InterfaceBase):
                 self.wait_for_sensor(ON, timeout=timeout)
                 self.wait_for_sensor(OFF, timeout=timeout)
         # properly initialized => mark it as working
+        self.error_led(OFF)
         self.is_working = True
 
     def stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
         if self.is_working:
+            self.error_led(ON)
             self.pump_control(OFF)
             self.valves_control(OFF)
             self.signals = []
@@ -673,7 +674,23 @@ class Interface(InterfaceBase):
             self.air_control(OFF)
             # release the interface so others can claim it
             self.is_working = False
+            self.error_led(OFF)
+            self.working_led(OFF)
             self.testing_mode = False
+
+    def error_led(self, state):
+        """Turn the error LED on or off"""
+        if state:
+            turn_on(self.gpios['error_led'])
+        else:
+            turn_off(self.gpios['error_led'])
+
+    def working_led(self, state):
+        """Turn the error LED on or off"""
+        if state:
+            turn_on(self.gpios['working_led'])
+        else:
+            turn_off(self.gpios['working_led'])
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
@@ -772,9 +789,9 @@ class Interface(InterfaceBase):
             # use longer timeout
             timeout = self.config['pump_stop_timeout']
 
+            self.error_led(ON)
             if self.is_working:
-                turn_off(self.gpios['working_led'])
-                turn_on(self.gpios['error_led'])
+                self.working_led(OFF)
 
             # try as long as necessary
             while self.status['pump']:
@@ -782,9 +799,8 @@ class Interface(InterfaceBase):
                 self.send_signals(stop_code, timeout=timeout)
 
             # finished; emergency LED off, working LED on if needed
-            turn_off(self.gpios['error_led'])
-            if self.is_working:
-                turn_on(self.gpios['working_led'])
+            self.error_led(OFF)
+            self.working_led(self.is_working)
         if state:
             start()
         else:
