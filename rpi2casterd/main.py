@@ -376,8 +376,19 @@ class InterfaceBase:
         """Get the emergency stop state"""
         return self.status.get('emergency_stop')
 
+    @emergency_stop.setter
+    def emergency_stop(self, state):
+        """Set the emergency stop state"""
+        self.stop()
+        self.update_status(emergency_stop=bool(state))
+
     @staticmethod
     def hardware_setup():
+        """Nothing to do."""
+        pass
+
+    @staticmethod
+    def stop():
         """Nothing to do."""
         pass
 
@@ -717,10 +728,7 @@ class Interface(InterfaceBase):
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
-        if state:
-            print('Emergency stop button pressed!')
-            self.stop()
-        self.update_status(emergency_stop=bool(state))
+        self.emergency_stop = state
 
     def machine_control(self, state):
         """Machine and interface control.
