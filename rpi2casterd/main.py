@@ -343,10 +343,13 @@ class InterfaceBase:
     @signals.setter
     def signals(self, source):
         """Set the current signals."""
+        print('Signals received: {}'.format(''.join([s for s in source])))
         codes = parse_signals(source)
         # do some changes based on mode
         if self.punch_mode:
             signals = codes if len(codes) >= 2 else [*codes, 'O15']
+        elif self.testing_mode:
+            signals = codes
         else:
             signals = [s for s in codes if s != 'O15']
         print('Sending signals: {}'.format(' '.join(signals)))
