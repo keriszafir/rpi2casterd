@@ -297,12 +297,13 @@ class InterfaceBase:
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
         # temporary GPIO dict (can be populated in hardware_setup)
-        self.gpios = dict(working_led=None)
+        self.gpios = dict(working_led=None, error_led=None)
         # initialize machine state
         self._status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
                             machine=OFF, water=OFF, air=OFF, motor=OFF,
                             pump=OFF, sensor=OFF, signals=[],
-                            emergency_stop=OFF, testing_mode=OFF)
+                            emergency_stop=OFF, testing_mode=OFF,
+                            working_led=OFF, error_led=OFF)
         self.hardware_setup()
 
     def __str__(self):
@@ -636,8 +637,8 @@ class Interface(InterfaceBase):
             message = 'Cannot do that - the machine is already working.'
             raise librpi2caster.InterfaceBusy(message)
         self.is_working = True
-        self.working_led(ON)
-        self.error_led(ON)
+        self.working_led = ON
+        self.error_led = ON
         # reset the RPM counter
         self.meter_events.clear()
         # turn on the compressed air
@@ -656,13 +657,21 @@ class Interface(InterfaceBase):
                 self.wait_for_sensor(ON, timeout=timeout)
                 self.wait_for_sensor(OFF, timeout=timeout)
         # properly initialized => mark it as working
-        self.error_led(OFF)
+        self.error_led = OFF
 
     def stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
         if self.is_working:
-            self.error_led(ON)
+            # orange LED for stopping sequence
+            self.working_led = ON
+            self.error_led = ON
+            # store the emergency stop state;
+            # temporarily ooverride for pump stop
+            estop, self.emergency_stop = self.emergency_stop, OFF
             self.pump_control(OFF)
+            # reset the emergency stop state so it has to be cleared in client
+            self.emergency_stop = estop
+            # turn all off
             self.valves_control(OFF)
             self.signals = []
             if not self.punch_mode and not self.testing_mode:
@@ -671,25 +680,40 @@ class Interface(InterfaceBase):
                 self.water_control(OFF)
             # turn off the machine air supply
             self.air_control(OFF)
+            # turn off the red/green/orange LED
+            self.error_led = OFF
+            self.working_led = OFF
             # release the interface so others can claim it
-            self.error_led(OFF)
-            self.working_led(OFF)
             self.is_working = False
             self.testing_mode = False
 
+    @property
+    def error_led(self):
+        """Get the current error LED state"""
+        return self.status.get('error_led')
+
+    @error_led.setter
     def error_led(self, state):
         """Turn the error LED on or off"""
         if state:
             turn_on(self.gpios['error_led'])
         else:
             turn_off(self.gpios['error_led'])
+        self.update_status(error_led=bool(state))
 
+    @property
+    def working_led(self):
+        """Get the current working LED state"""
+        return self.status.get('working_led')
+
+    @working_led.setter
     def working_led(self, state):
         """Turn the error LED on or off"""
         if state:
             turn_on(self.gpios['working_led'])
         else:
             turn_off(self.gpios['working_led'])
+        self.update_status(working_led=bool(state))
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
@@ -788,29 +812,25 @@ class Interface(InterfaceBase):
             # use longer timeout
             timeout = self.config['pump_stop_timeout']
 
-            self.error_led(ON)
-            if self.is_working:
-                self.working_led(OFF)
+            # store previous LED states; light the red error LED only
+            self.error_led, error_led = ON, self.error_led
+            self.working_led, working_led = OFF, self.working_led
 
             # try as long as necessary
             with suppress(librpi2caster.InterfaceNotStarted):
                 while self.status['pump']:
-                    self.send_signals(stop_code, timeout=timeout,
-                                      emergency_stop_override=True)
-                    self.send_signals(stop_code, timeout=timeout,
-                                      emergency_stop_override=True)
+                    self.send_signals(stop_code, timeout=timeout)
+                    self.send_signals(stop_code, timeout=timeout)
 
-            # finished; emergency LED off, working LED on if needed
-            self.error_led(OFF)
-            self.working_led(self.is_working)
+            # finished; reset LEDs
+            self.error_led, self.working_led = error_led, working_led
         if state:
             start()
         else:
             stop()
 
     @handle_machine_stop
-    def send_signals(self, signals, timeout=None,
-                     emergency_stop_override=False):
+    def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -831,11 +851,9 @@ class Interface(InterfaceBase):
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self.wait_for_sensor(ON, timeout=wait,
-                                 estop_override=emergency_stop_override)
+            self.wait_for_sensor(ON, timeout=wait)
             self.valves_control(ON)
-            self.wait_for_sensor(OFF, timeout=wait,
-                                 estop_override=emergency_stop_override)
+            self.wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
 
         def test():
