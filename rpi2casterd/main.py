@@ -754,7 +754,6 @@ class Interface(InterfaceBase):
             self.output.valves_off()
             self.update_status(valves=OFF)
 
-    @handle_machine_stop
     def motor_control(self, state):
         """Motor control:
             no state or None = get the motor state,
@@ -763,14 +762,14 @@ class Interface(InterfaceBase):
             start_gpio = self.gpios['motor_start']
             if start_gpio:
                 turn_on(start_gpio)
-                time.sleep(0.5)
+                time.sleep(0.2)
                 turn_off(start_gpio)
             self.update_status(motor=ON)
         else:
             stop_gpio = self.gpios['motor_stop']
             if stop_gpio:
                 turn_on(stop_gpio)
-                time.sleep(0.5)
+                time.sleep(0.2)
                 turn_off(stop_gpio)
             self.update_status(motor=OFF)
             self.meter_events.clear()
@@ -797,7 +796,6 @@ class Interface(InterfaceBase):
             turn_off(self.gpios['water'])
             self.update_status(water=OFF)
 
-    @handle_machine_stop
     def pump_control(self, state):
         """No state: get the pump status.
         Anything evaluating to True or False: start or stop the pump"""
