@@ -205,15 +205,10 @@ def handle_machine_stop(routine):
             if interface.status['emergency_stop']:
                 raise librpi2caster.MachineStopped
 
-        try:
-            # unfortunately we cannot abort the routine
-            check_emergency_stop()
-            retval = routine(interface, *args, **kwargs)
-            check_emergency_stop()
-            return retval
-        except (librpi2caster.MachineStopped, KeyboardInterrupt):
-            interface.stop()
-            raise librpi2caster.MachineStopped
+        check_emergency_stop()
+        retval = routine(interface, *args, **kwargs)
+        check_emergency_stop()
+        return retval
     return wrapper
 
 
@@ -397,6 +392,9 @@ class InterfaceBase:
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
+        if state:
+            print('Emergency stop button pressed!')
+            self.stop()
         self.status['emergency_stop'] = ON if state else OFF
 
     def wait_for_sensor(self, new_state, timeout=None):
@@ -601,8 +599,7 @@ class Interface(InterfaceBase):
 
         def update_emergency_stop(emergency_stop_gpio):
             """Check and update the emergency stop status"""
-            self.status['emergency_stop'] = get_state(emergency_stop_gpio)
-            print('Emergency stop button pressed!')
+            self.emergency_stop_control(get_state(emergency_stop_gpio))
 
         bouncetime = self.config['debounce_milliseconds']
         gpios = dict(sensor=setup_gpio('sensor_gpio', GPIO.IN, edge=GPIO.BOTH,
