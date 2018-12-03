@@ -351,6 +351,16 @@ class InterfaceBase:
         self.update_status(signals=signals)
 
     @property
+    def pump(self):
+        """Check the pump state"""
+        return self.status.get('pump')
+
+    @pump.setter
+    def pump(self, state):
+        """Set the pump state"""
+        self.update_status(pump=bool(state))
+
+    @property
     def sensor_state(self):
         """Get the sensor state"""
         return self.status['sensor']
@@ -439,7 +449,7 @@ class InterfaceBase:
         # check 0075 wedge position and determine the pump status:
         # find the earliest row number or default to 15
         pos_0075, pos_0005 = 15, 15
-        pump_working = self.status['pump']
+        pump_working = self.pump
         if found(['0075']) or found('NK'):
             # 0075 always turns the pump on
             pump_working = ON
@@ -459,8 +469,8 @@ class InterfaceBase:
                 if str(pos) in self.signals:
                     pos_0005 = pos
                     break
-        self.update_status(pump=pump_working,
-                           wedge_0075=pos_0075, wedge_0005=pos_0005)
+        self.pump = pump_working
+        self.update_status(wedge_0075=pos_0075, wedge_0005=pos_0005)
 
 
 class Interface(InterfaceBase):
@@ -680,7 +690,10 @@ class Interface(InterfaceBase):
             # store the emergency stop state;
             # temporarily ooverride for pump stop
             estop, self.emergency_stop = self.emergency_stop, OFF
-            self.pump_control(OFF)
+            while self.pump:
+                with suppress(librpi2caster.MachineStopped):
+                    print('Stopping the pump...')
+                    self.pump_control(OFF)
             # turn all off
             self.valves_control(OFF)
             self.signals = []
@@ -810,7 +823,7 @@ class Interface(InterfaceBase):
             This function will send the pump stop combination (NJS 0005) twice
             to make sure that the pump is turned off.
             In case of failure, repeat."""
-            if not self.status['pump']:
+            if not self.pump:
                 return
             # don't change the current 0005 wedge position
             wedge_0005 = self.status['wedge_0005']
