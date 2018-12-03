@@ -349,6 +349,7 @@ class InterfaceBase:
             signals = codes if len(codes) >= 2 else [*codes, 'O15']
         else:
             signals = [s for s in codes if s != 'O15']
+        print('Sending signals: {}'.format(' '.join(signals)))
         self.update_status(signals=signals)
 
     @property
@@ -391,7 +392,7 @@ class InterfaceBase:
         """Nothing to do."""
         pass
 
-    def wait_for_sensor(self, new_state, timeout=None, estop_override=False):
+    def wait_for_sensor(self, new_state, timeout=None):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -400,10 +401,8 @@ class InterfaceBase:
         start_time = time.time()
         timeout = timeout if timeout else self.config['sensor_timeout']
         while self.sensor_state != new_state:
-            if self.emergency_stop and not estop_override:
-                self.stop()
-                raise librpi2caster.MachineStopped
-            if time.time() - start_time > timeout:
+            timed_out = time.time() - start_time > timeout
+            if self.emergency_stop or timed_out:
                 self.stop()
                 raise librpi2caster.MachineStopped
             # wait 10ms to ease the load on the CPU
@@ -460,6 +459,9 @@ class InterfaceBase:
                 if str(pos) in self.signals:
                     pos_0005 = pos
                     break
+        if pump_working != self.pump:
+            print('Pump changed state from {} to {}'
+                  .format(self.pump, pump_working))
         self.pump = pump_working
         self.update_status(wedge_0075=pos_0075, wedge_0005=pos_0005)
 
@@ -810,8 +812,9 @@ class Interface(InterfaceBase):
         def start():
             """Start the pump."""
             # get the current 0075 wedge position and preserve it
-            wedge_0075 = self.status['wedge_0075']
-            self.send_signals('NKS0075{}'.format(wedge_0075))
+            if not self.pump:
+                wedge_0075 = self.status['wedge_0075']
+                self.send_signals('NKS0075{}'.format(wedge_0075))
 
         def stop():
             """Stop the pump if it is working.
@@ -890,7 +893,6 @@ class Interface(InterfaceBase):
             time.sleep(self.config['punching_off_time'])
 
         self.signals = signals
-        print('Sending signals: {}'.format(' '.join(self.signals)))
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
         rtn()
 
