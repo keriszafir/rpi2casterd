@@ -361,7 +361,13 @@ class InterfaceBase:
     @signals.setter
     def signals(self, source):
         """Set the current signals."""
-        self.status['signals'] = source
+        codes = parse_signals(source)
+        # do some changes based on mode
+        if self.punch_mode:
+            signals = codes if len(codes) >= 2 else [*codes, 'O15']
+        else:
+            signals = [s for s in codes if s != 'O15']
+        self.status['signals'] = signals
 
     @property
     def sensor_state(self):
@@ -556,7 +562,7 @@ class Interface(InterfaceBase):
             # find a suitable interface method, otherwise it's not implemented
             # handle_request will reply 501
             method_name = '{}_control'.format(device)
-            device_state = request.get_json().get(device)
+            device_state = request.get_json().get('state')
             try:
                 routine = getattr(self, method_name)
             except AttributeError:
@@ -700,9 +706,7 @@ class Interface(InterfaceBase):
         Accepts signals (turn on), False (turn off) or None (get the status)"""
         if state:
             # got the signals
-            codes = parse_signals(state)
-            self.output.valves_on(codes)
-            self.signals = codes
+            self.output.valves_on(self.signals)
             self.update_pump_and_wedges()
             self.status['valves'] = True
         else:
@@ -805,7 +809,7 @@ class Interface(InterfaceBase):
         In the punching mode, if there are less than two signals,
         an additional O+15 signal will be activated. Otherwise the paper ribbon
         advance mechanism won't work."""
-        def cast(codes):
+        def cast():
             """Monotype composition caster.
 
             Wait for sensor to go ON, turn on the valves,
@@ -813,44 +817,34 @@ class Interface(InterfaceBase):
             """
             if not self.is_working:
                 raise librpi2caster.InterfaceNotStarted
-
-            # skip O15 when casting
-            sigs = [s for s in codes if s != 'O15']
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
             self.wait_for_sensor(ON, timeout=wait)
-            self.valves_control(sigs)
+            self.valves_control(ON)
             self.wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
 
-        def test(codes):
+        def test():
             """Turn off any previous combination, then send signals."""
             with suppress(librpi2caster.InterfaceBusy):
                 self.start()
             # change the active combination
             self.valves_control(OFF)
-            self.valves_control(codes)
+            self.valves_control(ON)
 
-        def punch(codes):
+        def punch():
             """Timer-driven ribbon perforator."""
             with suppress(librpi2caster.InterfaceBusy):
                 self.start()
-            # add missing O15 if less than 2 signals
-            sigs = codes if len(codes) >= 2 else [*codes, 'O15']
             # timer-driven operation
-            self.valves_control(sigs)
+            self.valves_control(ON)
             time.sleep(self.config['punching_on_time'])
             self.valves_control(OFF)
             time.sleep(self.config['punching_off_time'])
 
-        if signals:
-            method = (test if self.testing_mode
-                      else punch if self.punch_mode else cast)
-            method(signals)
-        else:
-            # this tells the interface to turn off all the valves
-            self.valves_control(OFF)
+        rtn = test if self.testing_mode else punch if self.punch_mode else cast
+        rtn(signals)
 
 
 if __name__ == '__main__':
