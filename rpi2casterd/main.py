@@ -379,8 +379,8 @@ class InterfaceBase:
     @emergency_stop.setter
     def emergency_stop(self, state):
         """Set the emergency stop state"""
-        self.stop()
         self.update_status(emergency_stop=bool(state))
+        self.stop()
 
     @staticmethod
     def hardware_setup():
@@ -680,8 +680,6 @@ class Interface(InterfaceBase):
             # temporarily ooverride for pump stop
             estop, self.emergency_stop = self.emergency_stop, OFF
             self.pump_control(OFF)
-            # reset the emergency stop state so it has to be cleared in client
-            self.emergency_stop = estop
             # turn all off
             self.valves_control(OFF)
             self.signals = []
@@ -697,6 +695,8 @@ class Interface(InterfaceBase):
             # release the interface so others can claim it
             self.is_working = False
             self.testing_mode = False
+            # reset the emergency stop state so it has to be cleared in client
+            self.emergency_stop = estop
 
     @property
     def error_led(self):
