@@ -380,7 +380,8 @@ class InterfaceBase:
     def emergency_stop(self, state):
         """Set the emergency stop state"""
         self.update_status(emergency_stop=bool(state))
-        self.stop()
+        if state:
+            self.stop()
 
     @staticmethod
     def hardware_setup():
