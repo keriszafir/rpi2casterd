@@ -833,8 +833,9 @@ class Interface(InterfaceBase):
             self.valves_control(OFF)
             time.sleep(self.config['punching_off_time'])
 
+        self.signals = signals
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
-        rtn(signals)
+        rtn()
 
 
 if __name__ == '__main__':
