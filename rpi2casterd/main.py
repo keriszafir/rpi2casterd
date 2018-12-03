@@ -316,22 +316,11 @@ class InterfaceBase:
     @is_working.setter
     def is_working(self, state):
         """Set the machine working state"""
-        working_status = bool(state)
-        if working_status:
+        if state:
             turn_on(self.gpios['working_led'])
         else:
             turn_off(self.gpios['working_led'])
-        self.status['machine'] = working_status
-
-    @property
-    def pump_working(self):
-        """Get the pump working status"""
-        return self.status['pump']
-
-    @pump_working.setter
-    def pump_working(self, state):
-        """Set the pump working state"""
-        self.status['pump'] = bool(state)
+        self.update_status(machine=bool(state))
 
     @property
     def punch_mode(self):
@@ -346,7 +335,7 @@ class InterfaceBase:
     @testing_mode.setter
     def testing_mode(self, state):
         """Update the testing mode"""
-        self.status['testing_mode'] = bool(state)
+        self.update_status(testing_mode=bool(state))
 
     @property
     def signals(self):
@@ -362,7 +351,7 @@ class InterfaceBase:
             signals = codes if len(codes) >= 2 else [*codes, 'O15']
         else:
             signals = [s for s in codes if s != 'O15']
-        self.status['signals'] = signals
+        self.update_status(signals=signals)
 
     @property
     def sensor_state(self):
@@ -372,30 +361,23 @@ class InterfaceBase:
     @sensor_state.setter
     def sensor_state(self, state):
         """Update the sensor state"""
-        self.status['sensor'] = bool(state)
+        self.update_status(sensor=bool(state))
 
     @property
     def status(self):
         """Get the most current status."""
-        self._status.update(speed='{}rpm'.format(self.rpm()))
+        self.update_status(speed='{}rpm'.format(self.rpm()))
         return self._status
 
     @status.setter
     def status(self, status):
         """Chage the status"""
-        self._status.update(status)
+        self.update_status(**status)
 
     @staticmethod
     def hardware_setup():
         """Nothing to do."""
         pass
-
-    def emergency_stop_control(self, state):
-        """Emergency stop: state=ON to activate, OFF to clear"""
-        if state:
-            print('Emergency stop button pressed!')
-            self.stop()
-        self.status['emergency_stop'] = ON if state else OFF
 
     def wait_for_sensor(self, new_state, timeout=None):
         """Wait until the machine cycle sensor changes its state
@@ -430,6 +412,10 @@ class InterfaceBase:
             # not enough events / measurement points
             return 0
 
+    def update_status(self, **kwargs):
+        """Updates the machine status"""
+        self._status.update(**kwargs)
+
     def update_pump_and_wedges(self):
         """Check the wedge positions and return them."""
         def found(code):
@@ -438,39 +424,33 @@ class InterfaceBase:
 
         # check 0075 wedge position and determine the pump status:
         # find the earliest row number or default to 15
+        pos_0075, pos_0005 = 15, 15
+        pump_working = self.status['pump']
         if found(['0075']) or found('NK'):
             # 0075 always turns the pump on
-            self.pump_working = ON
+            pump_working = ON
             for pos in range(1, 15):
                 if str(pos) in self.signals:
-                    self.status['wedge_0075'] = pos
+                    pos_0075 = pos
                     break
-            else:
-                self.status['wedge_0075'] = 15
 
         elif found(['0005']) or found('NJ'):
             # 0005 without 0075 turns the pump off
-            self.pump_working = OFF
+            pump_working = OFF
 
         # check 0005 wedge position:
         # find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
             for pos in range(1, 15):
                 if str(pos) in self.signals:
-                    self.status['wedge_0005'] = pos
+                    pos_0005 = pos
                     break
-            else:
-                self.status['wedge_0005'] = 15
+        self.update_status(pump=pump_working,
+                           wedge_0075=pos_0075, wedge_0005=pos_0005)
 
 
 class Interface(InterfaceBase):
     """Hardware control interface"""
-    output, gpios = None, dict()
-
-    def __init__(self, config_dict):
-        super().__init__(config_dict)
-        self.hardware_setup()
-
     def webapi(self, listen_address):
         """JSON web API for communicating with the casting software."""
         def get_address_and_port():
@@ -516,15 +496,15 @@ class Interface(InterfaceBase):
                 settings: static configuration (in /etc/rpi2casterd.conf)
             """
             if request.method in (POST, PUT):
-                request_data = request.get_json()
-                self.status.update(request_data)
+                request_data = request.get_json() or {}
+                self.update_status(**request_data)
             return self.status
 
         @handle_request
         def config():
             """Return or change the interface configuration"""
             if request.method in (POST, PUT):
-                request_data = request.get_json()
+                request_data = request.get_json() or {}
                 self.config.update(request_data)
             return self.config
 
@@ -560,7 +540,8 @@ class Interface(InterfaceBase):
             # find a suitable interface method, otherwise it's not implemented
             # handle_request will reply 501
             method_name = '{}_control'.format(device)
-            device_state = request.get_json().get('state')
+            request_data = request.get_json() or {}
+            device_state = request_data.get('state')
             try:
                 routine = getattr(self, method_name)
             except AttributeError:
@@ -687,6 +668,13 @@ class Interface(InterfaceBase):
             self.is_working = False
             self.testing_mode = False
 
+    def emergency_stop_control(self, state):
+        """Emergency stop: state=ON to activate, OFF to clear"""
+        if state:
+            print('Emergency stop button pressed!')
+            self.stop()
+        self.update_status(emergency_stop=bool(state))
+
     def machine_control(self, state):
         """Machine and interface control.
         If no state or state is None, return the current working state.
@@ -705,10 +693,10 @@ class Interface(InterfaceBase):
             # got the signals
             self.output.valves_on(self.signals)
             self.update_pump_and_wedges()
-            self.status['valves'] = True
+            self.update_status(valves=ON)
         else:
             self.output.valves_off()
-            self.status['valves'] = False
+            self.update_status(valves=OFF)
 
     @handle_machine_stop
     def motor_control(self, state):
@@ -721,14 +709,14 @@ class Interface(InterfaceBase):
                 turn_on(start_gpio)
                 time.sleep(0.5)
                 turn_off(start_gpio)
-            self.status['motor'] = ON
+            self.update_status(motor=ON)
         else:
             stop_gpio = self.gpios['motor_stop']
             if stop_gpio:
                 turn_on(stop_gpio)
                 time.sleep(0.5)
                 turn_off(stop_gpio)
-            self.status['motor'] = OFF
+            self.update_status(motor=OFF)
             self.meter_events.clear()
 
     def air_control(self, state):
@@ -736,11 +724,11 @@ class Interface(InterfaceBase):
             no state or None = get the air state,
             anything evaluating to True or False = turn on or off"""
         if state:
-            turn_on(self.gpios['air'], raise_exception=True)
-            self.status['air'] = ON
+            turn_on(self.gpios['air'])
+            self.update_status(air=ON)
         else:
-            turn_off(self.gpios['air'], raise_exception=True)
-            self.status['air'] = OFF
+            turn_off(self.gpios['air'])
+            self.update_status(air=OFF)
 
     def water_control(self, state):
         """Cooling water control:
@@ -748,10 +736,10 @@ class Interface(InterfaceBase):
             anything evaluating to True or False = turn on or off"""
         if state:
             turn_on(self.gpios['water'])
-            self.status['water'] = ON
+            self.update_status(water=ON)
         else:
             turn_off(self.gpios['water'])
-            self.status['water'] = OFF
+            self.update_status(water=OFF)
 
     @handle_machine_stop
     def pump_control(self, state):
@@ -768,7 +756,7 @@ class Interface(InterfaceBase):
             This function will send the pump stop combination (NJS 0005) twice
             to make sure that the pump is turned off.
             In case of failure, repeat."""
-            if not self.pump_working:
+            if not self.status['pump']:
                 return
             # don't change the current 0005 wedge position
             wedge_0005 = self.status['wedge_0005']
@@ -782,7 +770,7 @@ class Interface(InterfaceBase):
                 turn_on(self.gpios['error_led'])
 
             # try as long as necessary
-            while self.pump_working:
+            while self.status['pump']:
                 self.send_signals(stop_code, timeout=timeout)
                 self.send_signals(stop_code, timeout=timeout)
 
