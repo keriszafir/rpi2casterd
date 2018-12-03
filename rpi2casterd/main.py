@@ -202,7 +202,7 @@ def handle_machine_stop(routine):
         """wraps the routine"""
         def check_emergency_stop():
             """check if the emergency stop button registered any events"""
-            if interface.status['emergency_stop']:
+            if interface.emergency_stop:
                 raise librpi2caster.MachineStopped
 
         check_emergency_stop()
@@ -374,6 +374,11 @@ class InterfaceBase:
         """Chage the status"""
         self.update_status(**status)
 
+    @property
+    def emergency_stop(self):
+        """Get the emergency stop state"""
+        return self.status.get('emergency_stop')
+
     @staticmethod
     def hardware_setup():
         """Nothing to do."""
@@ -387,7 +392,7 @@ class InterfaceBase:
         start_time = time.time()
         timeout = timeout if timeout else self.config['sensor_timeout']
         while self.sensor_state != new_state:
-            if self.status.get('emergency_stop'):
+            if self.emergency_stop:
                 raise librpi2caster.MachineStopped
             if time.time() - start_time > timeout:
                 raise librpi2caster.MachineStopped
