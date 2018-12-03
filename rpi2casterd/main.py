@@ -682,7 +682,7 @@ class Interface(InterfaceBase):
             self.air_control(OFF)
             # release the interface so others can claim it
             self.is_working = False
-            self.testing_mode = False()
+            self.testing_mode = False
 
     def machine_control(self, state):
         """Machine and interface control.
