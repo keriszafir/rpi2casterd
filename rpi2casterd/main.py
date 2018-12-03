@@ -609,7 +609,7 @@ class Interface(InterfaceBase):
         self.config['has_motor_control'] = bool(motor_feature)
 
         # use a GPIO pin for sensing punch/cast mode
-        self.config['punch_mode'] = get_state(gpios['mode_detect'])
+        self.config['punch_mode'] = bool(get_state(gpios['mode_detect']))
 
         # output setup:
         try:
