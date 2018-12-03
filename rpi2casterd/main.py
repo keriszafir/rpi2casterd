@@ -24,8 +24,6 @@ ON, OFF = True, False
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
                         *(str(x) for x in range(1, 15)), 'O15'])
 
-# Where to look for config?
-CONFIGURATION_PATH = '/etc/rpi2casterd.conf'
 DEFAULTS = dict(name='Monotype composition caster',
                 listen_address='0.0.0.0:23017', output_driver='smbus',
                 shutdown_gpio='24', shutdown_command='shutdown -h now',
@@ -45,7 +43,7 @@ DEFAULTS = dict(name='Monotype composition caster',
                 valve3='1,2,3,4,5,6,7,8',
                 valve4='9,10,11,12,13,14,0005,O15')
 CFG = configparser.ConfigParser(defaults=DEFAULTS)
-CFG.read(CONFIGURATION_PATH)
+CFG.read(['/usr/lib/rpi2casterd/rpi2casterd.conf', '/etc/rpi2casterd.conf'])
 
 # Initialize the application
 GPIO.setmode(GPIO.BCM)
