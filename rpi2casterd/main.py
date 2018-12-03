@@ -380,7 +380,7 @@ class InterfaceBase:
         """Nothing to do."""
         pass
 
-    def wait_for_sensor(self, new_state, timeout=None):
+    def wait_for_sensor(self, new_state, timeout=None, estop_override=False):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -388,7 +388,7 @@ class InterfaceBase:
         start_time = time.time()
         timeout = timeout if timeout else self.config['sensor_timeout']
         while self.sensor_state != new_state:
-            if self.emergency_stop:
+            if self.emergency_stop and not estop_override:
                 raise librpi2caster.MachineStopped
             if time.time() - start_time > timeout:
                 raise librpi2caster.MachineStopped
@@ -657,7 +657,6 @@ class Interface(InterfaceBase):
                 self.wait_for_sensor(OFF, timeout=timeout)
         # properly initialized => mark it as working
         self.error_led(OFF)
-        self.is_working = True
 
     def stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
@@ -673,9 +672,9 @@ class Interface(InterfaceBase):
             # turn off the machine air supply
             self.air_control(OFF)
             # release the interface so others can claim it
-            self.is_working = False
             self.error_led(OFF)
             self.working_led(OFF)
+            self.is_working = False
             self.testing_mode = False
 
     def error_led(self, state):
@@ -794,9 +793,12 @@ class Interface(InterfaceBase):
                 self.working_led(OFF)
 
             # try as long as necessary
-            while self.status['pump']:
-                self.send_signals(stop_code, timeout=timeout)
-                self.send_signals(stop_code, timeout=timeout)
+            with suppress(librpi2caster.InterfaceNotStarted):
+                while self.status['pump']:
+                    self.send_signals(stop_code, timeout=timeout,
+                                      emergency_stop_override=True)
+                    self.send_signals(stop_code, timeout=timeout,
+                                      emergency_stop_override=True)
 
             # finished; emergency LED off, working LED on if needed
             self.error_led(OFF)
@@ -807,7 +809,8 @@ class Interface(InterfaceBase):
             stop()
 
     @handle_machine_stop
-    def send_signals(self, signals, timeout=None):
+    def send_signals(self, signals, timeout=None,
+                     emergency_stop_override=False):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -828,9 +831,11 @@ class Interface(InterfaceBase):
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self.wait_for_sensor(ON, timeout=wait)
+            self.wait_for_sensor(ON, timeout=wait,
+                                 estop_override=emergency_stop_override)
             self.valves_control(ON)
-            self.wait_for_sensor(OFF, timeout=wait)
+            self.wait_for_sensor(OFF, timeout=wait,
+                                 estop_override=emergency_stop_override)
             self.valves_control(OFF)
 
         def test():
