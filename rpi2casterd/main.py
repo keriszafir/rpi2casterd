@@ -194,14 +194,9 @@ def handle_machine_stop(routine):
     @wraps(routine)
     def wrapper(interface, *args, **kwargs):
         """wraps the routine"""
-        def check_emergency_stop():
-            """check if the emergency stop button registered any events"""
-            if interface.emergency_stop:
-                raise librpi2caster.MachineStopped
-
-        check_emergency_stop()
+        interface.emergency_stop_control(interface.emergency_stop)
         retval = routine(interface, *args, **kwargs)
-        check_emergency_stop()
+        interface.emergency_stop_control(interface.emergency_stop)
         return retval
     return wrapper
 
@@ -400,8 +395,8 @@ class InterfaceBase:
             timed_out = time.time() - start_time > timeout
             if self.emergency_stop or timed_out:
                 raise librpi2caster.MachineStopped
-            # wait 10ms to ease the load on the CPU
-            time.sleep(0.01)
+            # wait 5ms to ease the load on the CPU
+            time.sleep(0.005)
 
     def rpm(self):
         """Speed meter for rpi2casterd"""
@@ -740,6 +735,7 @@ class Interface(InterfaceBase):
         """Emergency stop: state=ON to activate, OFF to clear"""
         self.emergency_stop = state
         if state:
+            self.stop()
             raise librpi2caster.MachineStopped
 
     def machine_control(self, state):
