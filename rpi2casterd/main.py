@@ -154,16 +154,12 @@ def parse_configuration(source):
         raw = [x.strip().upper() for x in input_string.split(',')]
         return [x for x in raw if x in OUTPUT_SIGNALS]
 
-    def lcstr(input_string):
-        """Return a lowercase string stripped of all whitespace"""
-        return input_string.strip().lower()
-
     def integer(input_string):
         """Convert a decimal, octal, binary or hexadecimal string to int"""
         with suppress(TypeError):
             return int(input_string, 0)
 
-    def get(parameter, convert=lcstr):
+    def get(parameter, convert=str):
         """Gets a value from a specified source for a given parameter,
         converts it to a desired data type"""
         return convert(source.get(parameter))
@@ -171,7 +167,7 @@ def parse_configuration(source):
     config = OrderedDict()
 
     # get timings
-    config['name'] = get('name')
+    config['name'] = get('name', str)
     config['startup_timeout'] = get('startup_timeout', float)
     config['sensor_timeout'] = get('sensor_timeout', float)
     config['pump_stop_timeout'] = get('pump_stop_timeout', float)
@@ -182,7 +178,7 @@ def parse_configuration(source):
     config['debounce_milliseconds'] = get('debounce_milliseconds', int)
 
     # determine the output driver and settings
-    config['output_driver'] = get('output_driver')
+    config['output_driver'] = get('output_driver').lower()
     config['i2c_bus'] = get('i2c_bus', integer)
     config['mcp0_address'] = get('mcp0_address', integer)
     config['mcp1_address'] = get('mcp1_address', integer)
@@ -201,7 +197,6 @@ def handle_machine_stop(routine):
         def check_emergency_stop():
             """check if the emergency stop button registered any events"""
             if interface.emergency_stop:
-                interface.stop()
                 raise librpi2caster.MachineStopped
 
         check_emergency_stop()
@@ -404,7 +399,6 @@ class InterfaceBase:
         while self.sensor_state != new_state:
             timed_out = time.time() - start_time > timeout
             if self.emergency_stop or timed_out:
-                self.stop()
                 raise librpi2caster.MachineStopped
             # wait 10ms to ease the load on the CPU
             time.sleep(0.01)
@@ -486,23 +480,26 @@ class Interface(InterfaceBase):
             @wraps(routine)
             def wrapper(*args, **kwargs):
                 """wraps the routine"""
+                response = OrderedDict()
                 try:
                     # does the function return any json-ready parameters?
                     outcome = routine(*args, **kwargs) or {}
                     # if caught no exceptions, all went well => return success
-                    return jsonify(OrderedDict(success=True, **outcome))
+                    response.update(success=True, **outcome)
                 except KeyError:
                     abort(404)
                 except NotImplementedError:
                     abort(501)
                 except (librpi2caster.InterfaceNotStarted,
-                        librpi2caster.InterfaceBusy,
-                        librpi2caster.MachineStopped) as exc:
+                        librpi2caster.InterfaceBusy) as exc:
                     # HTTP response with an error code
-                    resp = OrderedDict(success=False, error_name=exc.message,
-                                       error_code=exc.code,
-                                       offending_value=str(exc) or None)
-                    return jsonify(resp)
+                    response.update(success=False, error_code=exc.code,
+                                    error_name=exc.message)
+                except librpi2caster.MachineStopped as exc:
+                    self.stop()
+                    response.update(success=False, error_code=exc.code,
+                                    error_name=exc.message)
+                return jsonify(response)
 
             return wrapper
 
@@ -688,6 +685,7 @@ class Interface(InterfaceBase):
             # temporarily ooverride for pump stop
             estop, self.emergency_stop = self.emergency_stop, OFF
             while self.pump:
+                # force turning the pump off
                 with suppress(librpi2caster.MachineStopped):
                     print('Stopping the pump...')
                     self.pump_control(OFF)
