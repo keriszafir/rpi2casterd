@@ -661,7 +661,7 @@ class Interface(InterfaceBase):
         self.air_control(ON)
         if self.punch_mode or self.testing_mode:
             # automatically reset the emergency stop if it was engaged
-            self.emergency_stop_control(OFF)
+            self.emergency_stop = OFF
         else:
             # turn on the cooling water and motor, check the machine rotation
             # if MachineStopped is raised, it'll bubble up from here
@@ -739,6 +739,8 @@ class Interface(InterfaceBase):
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
         self.emergency_stop = state
+        if state:
+            raise librpi2caster.MachineStopped
 
     def machine_control(self, state):
         """Machine and interface control.
