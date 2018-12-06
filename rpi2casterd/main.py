@@ -195,9 +195,10 @@ def handle_machine_stop(routine):
     def wrapper(interface, *args, **kwargs):
         """wraps the routine"""
         interface.emergency_stop_control(interface.emergency_stop)
-        retval = routine(interface, *args, **kwargs)
-        interface.emergency_stop_control(interface.emergency_stop)
-        return retval
+        try:
+            return routine(interface, *args, **kwargs)
+        finally:
+            interface.emergency_stop_control(interface.emergency_stop)
     return wrapper
 
 
@@ -335,7 +336,8 @@ class InterfaceBase:
         codes = parse_signals(source)
         # do some changes based on mode
         if self.punch_mode:
-            signals = codes if len(codes) >= 2 else [*codes, 'O15']
+            signals = (codes if len(codes) >= 2
+                       else codes if 'O15' in codes else [*codes, 'O15'])
         elif self.testing_mode:
             signals = codes
         else:
@@ -426,10 +428,23 @@ class InterfaceBase:
             """check if code was found in a combination"""
             return set(code).issubset(self.signals)
 
+        # check the previous wedge positions and pump state
+        pos_0075 = self.status.get('wedge_0075')
+        pos_0005 = self.status.get('wedge_0005')
+        pump_working = self.status.get('pump')
+        # check 0005 wedge position:
+        # find the earliest row number or default to 15
+        if found(['0005']) or found('NJ'):
+            pump_working = OFF
+            for pos in range(1, 15):
+                if str(pos) in self.signals:
+                    pos_0005 = pos
+                    break
+            else:
+                pos_0005 = 15
+
         # check 0075 wedge position and determine the pump status:
         # find the earliest row number or default to 15
-        pos_0075, pos_0005 = 15, 15
-        pump_working = self.pump
         if found(['0075']) or found('NK'):
             # 0075 always turns the pump on
             pump_working = ON
@@ -437,23 +452,11 @@ class InterfaceBase:
                 if str(pos) in self.signals:
                     pos_0075 = pos
                     break
+            else:
+                pos_0075 = 15
 
-        elif found(['0005']) or found('NJ'):
-            # 0005 without 0075 turns the pump off
-            pump_working = OFF
-
-        # check 0005 wedge position:
-        # find the earliest row number or default to 15
-        if found(['0005']) or found('NJ'):
-            for pos in range(1, 15):
-                if str(pos) in self.signals:
-                    pos_0005 = pos
-                    break
-        if pump_working != self.pump:
-            print('Pump changed state from {} to {}'
-                  .format(self.pump, pump_working))
-        self.pump = pump_working
-        self.update_status(wedge_0075=pos_0075, wedge_0005=pos_0005)
+        self.update_status(pump=bool(pump_working),
+                           wedge_0075=pos_0075, wedge_0005=pos_0005)
 
 
 class Interface(InterfaceBase):
@@ -526,13 +529,12 @@ class Interface(InterfaceBase):
             GET: gets the current signals,
             PUT/POST: sends the signals to the machine."""
             if request.method in (POST, PUT):
-                request_data = request.get_json() or {}
+                request_data = request.get_json() or dict()
                 codes = request_data.get('signals') or []
                 timeout = request_data.get('timeout')
                 self.send_signals(codes, timeout)
             elif request.method == DELETE:
                 self.valves_control(OFF)
-                return {}
             return dict(signals=self.signals)
 
         @handle_request
