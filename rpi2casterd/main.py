@@ -10,6 +10,7 @@ from collections import deque, OrderedDict
 from contextlib import suppress
 from functools import wraps
 import configparser
+import logging
 import signal
 import subprocess
 import time
@@ -19,6 +20,7 @@ from flask import Flask, abort, jsonify
 from flask.globals import request
 import RPi.GPIO as GPIO
 
+LOG = logging.getLogger('rpi2casterd')
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 ON, OFF = True, False
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
@@ -48,6 +50,15 @@ CFG.read(['/usr/lib/rpi2casterd/rpi2casterd.conf', '/etc/rpi2casterd.conf'])
 # Initialize the application
 GPIO.setmode(GPIO.BCM)
 LEDS = dict()
+
+
+def journald_setup():
+    """Set up and start journald logging"""
+    with suppress(ImportError):
+        from systemd.journal import JournaldLogHandler
+        journald_handler = JournaldLogHandler()
+        log_entry_format = '[%(levelname)s] %(message)s'
+        journald_handler.setFormatter(logging.Formatter(log_entry_format))
 
 
 def setup_gpio(name, direction, pull=None, callbk=None,
@@ -207,22 +218,22 @@ def daemon_setup():
     def shutdown(*_):
         """Shut the system down"""
         command = CFG.defaults().get('shutdown_command')
-        print('Shutdown button pressed. Hold down for 2s to shut down...')
+        LOG.warning('Shutdown button pressed. Hold down for 2s to turn off...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
         if not get_state(shdn):
-            print('Shutting down...')
+            LOG.info('Shutting down...')
             ready_led_blink()
             subprocess.run([x.strip() for x in command.split(' ')])
 
     def reboot(*_):
         """Restart the system"""
         command = CFG.defaults().get('reboot_command')
-        print('Reboot button pressed. Hold down for 2s to reboot...')
+        LOG.warning('Reboot button pressed. Hold down for 2s to reboot...')
         time.sleep(2)
         # the button is between GPIO and GND i.e. pulled up - negative logic
         if not get_state(reset):
-            print('Rebooting...')
+            LOG.info('Rebooting...')
             ready_led_blink()
             subprocess.run([x.strip() for x in command.split(' ')])
 
@@ -241,6 +252,7 @@ def daemon_setup():
 
 def main():
     """Starts the application. Contains web API subroutines."""
+    journald_setup()
     interface = None
     config = CFG.defaults()
     listen_address = config.get('listen_address')
@@ -260,14 +272,14 @@ def main():
         raise librpi2caster.ConfigurationError(exception)
 
     except (OSError, PermissionError, RuntimeError) as exception:
-        print('ERROR: Not enough privileges to do this.')
-        print('You have to belong to the "gpio" and "spidev" user groups.')
-        print('If this occurred during reboot/shutdown, you need to run '
-              'these commands as root (e.g. with sudo).')
-        print(str(exception))
+        LOG.error('ERROR: Not enough privileges to do this.')
+        LOG.info('You have to belong to the "gpio" and "spidev" user groups. '
+                 'If this occurred during reboot/shutdown, you need to run '
+                 'these commands as root (e.g. with sudo).')
+        LOG.error(str(exception))
 
     except KeyboardInterrupt:
-        print('System exit.')
+        LOG.info('System exit due to ctrl-C keypress.')
 
     finally:
         # make sure the GPIOs are de-configured properly
@@ -332,7 +344,8 @@ class InterfaceBase:
     @signals.setter
     def signals(self, source):
         """Set the current signals."""
-        print('Signals received: {}'.format(''.join([s for s in source])))
+        message = 'Signals received: {}'.format(''.join([s for s in source]))
+        LOG.debug(message)
         codes = parse_signals(source)
         # do some changes based on mode
         if self.punch_mode:
@@ -342,7 +355,8 @@ class InterfaceBase:
             signals = codes
         else:
             signals = [s for s in codes if s != 'O15']
-        print('Sending signals: {}'.format(' '.join(signals)))
+        message = 'Sending signals: {}'.format(' '.join(signals))
+        LOG.debug(message)
         self.update_status(signals=signals)
 
     @property
@@ -390,7 +404,8 @@ class InterfaceBase:
         to the desired value (True or False).
         If no state change is registered in the given time,
         raise MachineStopped."""
-        print('Waiting for sensor state {}'.format(new_state))
+        message = 'Waiting for sensor state {}'.format(new_state)
+        LOG.debug(message)
         start_time = time.time()
         timeout = timeout if timeout else self.config['sensor_timeout']
         while self.sensor_state != new_state:
@@ -587,8 +602,9 @@ class Interface(InterfaceBase):
         def update_sensor(sensor_gpio):
             """Update the RPM event counter"""
             self.sensor_state = get_state(sensor_gpio)
-            print('Photocell sensor goes {}'
-                  .format('ON' if self.sensor_state else 'OFF'))
+            message = ('Photocell sensor goes {}'
+                       .format('ON' if self.sensor_state else 'OFF'))
+            LOG.debug(message)
             if self.sensor_state:
                 self.meter_events.append(time.time())
 
@@ -596,7 +612,7 @@ class Interface(InterfaceBase):
             """Check and update the emergency stop status"""
             state = get_state(emergency_stop_gpio)
             if state:
-                print('Emergency stop button pressed!')
+                LOG.error('Emergency stop button pressed!')
                 self.emergency_stop = ON
 
         bouncetime = self.config['debounce_milliseconds']
@@ -675,6 +691,7 @@ class Interface(InterfaceBase):
     def stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
         if self.is_working:
+            LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
             self.working_led = ON
             self.error_led = ON
@@ -684,9 +701,9 @@ class Interface(InterfaceBase):
             while self.pump:
                 # force turning the pump off
                 with suppress(librpi2caster.MachineStopped):
-                    print('Stopping the pump...')
+                    LOG.info('Stopping the pump...')
                     self.pump_control(OFF)
-                    print('Pump stopped.')
+                    LOG.info('Pump stopped.')
             # turn all off
             self.valves_control(OFF)
             self.signals = []
@@ -702,6 +719,7 @@ class Interface(InterfaceBase):
             # release the interface so others can claim it
             self.is_working = False
             self.testing_mode = False
+            LOG.info('Machine stopped.')
             # reset the emergency stop state so it has to be cleared in client
             self.emergency_stop = estop
 
