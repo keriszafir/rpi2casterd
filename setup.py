@@ -1,12 +1,12 @@
 """rpi2casterd setup: this software SHOULD be installed on a Raspberry Pi."""
 from setuptools import setup
 
-__version__ = '2.3.0'
+__version__ = '2.3.1'
 __author__ = 'Christophe Catherine Slychan'
 __author_email__ = 'krzysztof.slychan@gmail.com'
 __github_url__ = 'http://github.com/elegantandrogyne/rpi2casterd'
 __dependencies__ = ['RPi.GPIO >= 0.6.3', 'Flask >= 0.12',
-                    'librpi2caster >= 2.0', 'systemd >= 0.15']
+                    'librpi2caster >= 2.0']
 
 with open('README.rst', 'r') as readme_file:
     long_description = readme_file.read()

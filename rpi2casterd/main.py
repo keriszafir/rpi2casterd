@@ -55,10 +55,11 @@ LEDS = dict()
 def journald_setup():
     """Set up and start journald logging"""
     with suppress(ImportError):
-        from systemd.journal import JournaldLogHandler
-        journald_handler = JournaldLogHandler()
+        from systemd.journal import JournalHandler
+        journal_handler = JournalHandler()
         log_entry_format = '[%(levelname)s] %(message)s'
-        journald_handler.setFormatter(logging.Formatter(log_entry_format))
+        journal_handler.setFormatter(logging.Formatter(log_entry_format))
+        LOG.addHandler(journal_handler)
 
 
 def setup_gpio(name, direction, pull=None, callbk=None,
