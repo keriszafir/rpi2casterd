@@ -349,11 +349,11 @@ class InterfaceBase:
         LOG.debug(message)
         codes = parse_signals(source)
         # do some changes based on mode
-        if self.punch_mode:
+        if self.testing_mode:
+            signals = codes
+        elif self.punch_mode:
             signals = (codes if len(codes) >= 2
                        else codes if 'O15' in codes else [*codes, 'O15'])
-        elif self.testing_mode:
-            signals = codes
         else:
             signals = [s for s in codes if s != 'O15']
         message = 'Sending signals: {}'.format(' '.join(signals))
