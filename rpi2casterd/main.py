@@ -310,12 +310,12 @@ class InterfaceBase:
         self.hardware_setup()
 
     def __str__(self):
-        return self.config['name']
+        return self.config.get('name', 'Monotype composition caster')
 
     @property
     def is_working(self):
         """Get the machine working status"""
-        return self.status['machine']
+        return self.status.get('machine')
 
     @is_working.setter
     def is_working(self, state):
@@ -340,7 +340,7 @@ class InterfaceBase:
     @property
     def signals(self):
         """Get the current signals."""
-        return self.status['signals']
+        return self.status.get('signals')
 
     @signals.setter
     def signals(self, source):
@@ -373,7 +373,7 @@ class InterfaceBase:
     @property
     def sensor_state(self):
         """Get the sensor state"""
-        return self.status['sensor']
+        return self.status.get('sensor')
 
     @sensor_state.setter
     def sensor_state(self, state):
@@ -408,7 +408,7 @@ class InterfaceBase:
         message = 'Waiting for sensor state {}'.format(new_state)
         LOG.debug(message)
         start_time = time.time()
-        timeout = timeout if timeout else self.config['sensor_timeout']
+        timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
         while self.sensor_state != new_state:
             timed_out = time.time() - start_time > timeout
             if self.emergency_stop or timed_out:
@@ -419,7 +419,7 @@ class InterfaceBase:
     def rpm(self):
         """Speed meter for rpi2casterd"""
         events = self.meter_events
-        sensor_timeout = self.config['sensor_timeout']
+        sensor_timeout = self.config.get('sensor_timeout', 5)
         try:
             # how long in seconds is it from the first to last event?
             duration = events[-1] - events[0]
@@ -616,7 +616,7 @@ class Interface(InterfaceBase):
                 LOG.error('Emergency stop button pressed!')
                 self.emergency_stop = ON
 
-        bouncetime = self.config['debounce_milliseconds']
+        bouncetime = self.config.get('debounce_milliseconds', 5)
         gpios = dict(sensor=setup_gpio('sensor_gpio', GPIO.IN, edge=GPIO.BOTH,
                                        callbk=update_sensor,
                                        bouncetime=bouncetime),
@@ -638,11 +638,11 @@ class Interface(InterfaceBase):
         self.config['has_motor_control'] = bool(motor_feature)
 
         # use a GPIO pin for sensing punch/cast mode
-        self.config['punch_mode'] = bool(get_state(gpios['mode_detect']))
+        self.config['punch_mode'] = bool(get_state(gpios.get('mode_detect')))
 
         # output setup:
         try:
-            output_name = self.config['output_driver']
+            output_name = self.config.get('output_driver')
             if output_name == 'smbus':
                 from rpi2casterd.smbus import SMBusOutput as output
             elif output_name == 'wiringpi':
@@ -657,7 +657,8 @@ class Interface(InterfaceBase):
             raise librpi2caster.ConfigurationError('{}: module not installed'
                                                    .format(output_name))
         self.gpios = gpios
-        LEDS.update(error=gpios['error_led'], working=gpios['working_led'])
+        LEDS.update(error=gpios.get('error_led'),
+                    working=gpios.get('working_led'))
 
     @handle_machine_stop
     def start(self):
@@ -682,7 +683,7 @@ class Interface(InterfaceBase):
             self.water_control(ON)
             self.motor_control(ON)
             # check machine rotation
-            timeout = self.config['startup_timeout']
+            timeout = self.config.get('startup_timeout', 5)
             for _ in range(3):
                 self.wait_for_sensor(ON, timeout=timeout)
                 self.wait_for_sensor(OFF, timeout=timeout)
@@ -733,9 +734,9 @@ class Interface(InterfaceBase):
     def error_led(self, state):
         """Turn the error LED on or off"""
         if state:
-            turn_on(self.gpios['error_led'])
+            turn_on(self.gpios.get('error_led'))
         else:
-            turn_off(self.gpios['error_led'])
+            turn_off(self.gpios.get('error_led'))
         self.update_status(error_led=bool(state))
 
     @property
@@ -747,9 +748,9 @@ class Interface(InterfaceBase):
     def working_led(self, state):
         """Turn the error LED on or off"""
         if state:
-            turn_on(self.gpios['working_led'])
+            turn_on(self.gpios.get('working_led'))
         else:
-            turn_off(self.gpios['working_led'])
+            turn_off(self.gpios('working_led'))
         self.update_status(working_led=bool(state))
 
     def emergency_stop_control(self, state):
@@ -787,14 +788,14 @@ class Interface(InterfaceBase):
             no state or None = get the motor state,
             anything evaluating to True or False = turn on or off"""
         if state:
-            start_gpio = self.gpios['motor_start']
+            start_gpio = self.gpios.get('motor_start')
             if start_gpio:
                 turn_on(start_gpio)
                 time.sleep(0.2)
                 turn_off(start_gpio)
             self.update_status(motor=ON)
         else:
-            stop_gpio = self.gpios['motor_stop']
+            stop_gpio = self.gpios.get('motor_stop')
             if stop_gpio:
                 turn_on(stop_gpio)
                 time.sleep(0.2)
@@ -806,22 +807,24 @@ class Interface(InterfaceBase):
         """Air supply control: master compressed air solenoid valve.
             no state or None = get the air state,
             anything evaluating to True or False = turn on or off"""
+        air_gpio = self.gpios.get('air')
         if state:
-            turn_on(self.gpios['air'])
+            turn_on(air_gpio)
             self.update_status(air=ON)
         else:
-            turn_off(self.gpios['air'])
+            turn_off(air_gpio)
             self.update_status(air=OFF)
 
     def water_control(self, state):
         """Cooling water control:
             no state or None = get the water valve state,
             anything evaluating to True or False = turn on or off"""
+        water_gpio = self.gpios.get('water')
         if state:
-            turn_on(self.gpios['water'])
+            turn_on(water_gpio)
             self.update_status(water=ON)
         else:
-            turn_off(self.gpios['water'])
+            turn_off(water_gpio)
             self.update_status(water=OFF)
 
     def pump_control(self, state):
@@ -846,7 +849,7 @@ class Interface(InterfaceBase):
             stop_code = 'NJS0005{}'.format(wedge_0005)
 
             # use longer timeout
-            timeout = self.config['pump_stop_timeout']
+            timeout = self.config.get('pump_stop_timeout')
 
             # store previous LED states; light the red error LED only
             self.error_led, error_led = ON, self.error_led
@@ -854,7 +857,7 @@ class Interface(InterfaceBase):
 
             # try as long as necessary
             with suppress(librpi2caster.InterfaceNotStarted):
-                while self.status['pump']:
+                while self.pump:
                     self.send_signals(stop_code, timeout=timeout)
                     self.send_signals(stop_code, timeout=timeout)
 
