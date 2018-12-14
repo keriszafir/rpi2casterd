@@ -664,8 +664,10 @@ class Interface(InterfaceBase):
     def start(self):
         """Starts the machine. When casting, check if it's running."""
         # check if the interface is already busy
+        LOG.info('Starting the machine...')
         if self.is_working:
             message = 'Cannot do that - the machine is already working.'
+            LOG.error(message)
             raise librpi2caster.InterfaceBusy(message)
         self.is_working = True
         self.working_led = ON
@@ -689,14 +691,18 @@ class Interface(InterfaceBase):
                     self.wait_for_sensor(ON, timeout=timeout)
                     self.wait_for_sensor(OFF, timeout=timeout)
         except librpi2caster.MachineStopped:
+            LOG.error('Machine stalling or emergency stop. Not starting!')
             self.stop()
             raise
+        LOG.info('Machine started.')
         # properly initialized => mark it as working
         self.error_led = OFF
 
     def stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
+        LOG.debug('Checking if the machine is working...')
         if self.is_working:
+            LOG.debug('The machine was working.')
             LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
             self.working_led = ON
