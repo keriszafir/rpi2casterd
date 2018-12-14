@@ -674,19 +674,23 @@ class Interface(InterfaceBase):
         self.meter_events.clear()
         # turn on the compressed air
         self.air_control(ON)
-        if self.punch_mode or self.testing_mode:
-            # automatically reset the emergency stop if it was engaged
-            self.emergency_stop = OFF
-        else:
-            # turn on the cooling water and motor, check the machine rotation
-            # if MachineStopped is raised, it'll bubble up from here
-            self.water_control(ON)
-            self.motor_control(ON)
-            # check machine rotation
-            timeout = self.config.get('startup_timeout', 5)
-            for _ in range(3):
-                self.wait_for_sensor(ON, timeout=timeout)
-                self.wait_for_sensor(OFF, timeout=timeout)
+        try:
+            if self.punch_mode or self.testing_mode:
+                # automatically reset the emergency stop if it was engaged
+                self.emergency_stop = OFF
+            else:
+                # turn on the cooling water and motor, check the rotation
+                # if MachineStopped is raised, it'll bubble up from here
+                self.water_control(ON)
+                self.motor_control(ON)
+                # check machine rotation
+                timeout = self.config.get('startup_timeout', 5)
+                for _ in range(3):
+                    self.wait_for_sensor(ON, timeout=timeout)
+                    self.wait_for_sensor(OFF, timeout=timeout)
+        except librpi2caster.MachineStopped:
+            self.stop()
+            raise
         # properly initialized => mark it as working
         self.error_led = OFF
 
