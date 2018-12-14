@@ -750,7 +750,7 @@ class Interface(InterfaceBase):
         if state:
             turn_on(self.gpios.get('working_led'))
         else:
-            turn_off(self.gpios('working_led'))
+            turn_off(self.gpios.get('working_led'))
         self.update_status(working_led=bool(state))
 
     def emergency_stop_control(self, state):
