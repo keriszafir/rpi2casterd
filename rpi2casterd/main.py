@@ -59,6 +59,7 @@ def journald_setup():
         journal_handler = JournalHandler()
         log_entry_format = '[%(levelname)s] %(message)s'
         journal_handler.setFormatter(logging.Formatter(log_entry_format))
+        LOG.setLevel(logging.DEBUG)
         LOG.addHandler(journal_handler)
 
 
