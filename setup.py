@@ -1,7 +1,7 @@
 """rpi2casterd setup: this software SHOULD be installed on a Raspberry Pi."""
 from setuptools import setup
 
-__version__ = '2.3.9'
+__version__ = '2.3.10'
 __author__ = 'Christophe Catherine Slychan'
 __author_email__ = 'krzysztof.slychan@gmail.com'
 __github_url__ = 'http://github.com/elegantandrogyne/rpi2casterd'
@@ -18,8 +18,7 @@ setup(name='rpi2casterd', version=__version__,
       license='MIT',
       packages=['rpi2casterd'], include_package_data=True,
       package_data={'rpi2casterd': ['data/*']},
-      data_files=[('/etc/systemd/system', ['data/rpi2casterd.service']),
-                  ('/usr/lib/rpi2casterd', ['data/rpi2casterd.conf'])],
+      data_files=[('/usr/lib/rpi2casterd', ['data/rpi2casterd.conf', 'data/rpi2casterd.service'])],
       classifiers=['Development Status :: 5 - Production/Stable',
                    'Topic :: System :: Hardware :: Hardware Drivers',
                    'License :: OSI Approved :: MIT License',
