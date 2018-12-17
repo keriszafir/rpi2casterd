@@ -1,4 +1,4 @@
-\"""rpi2casterd setup: this software SHOULD be installed on a Raspberry Pi."""
+"""rpi2casterd setup: this software SHOULD be installed on a Raspberry Pi."""
 from setuptools import setup
 
 __version__ = '2.3.11'
