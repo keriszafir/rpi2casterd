@@ -23,6 +23,10 @@ import RPi.GPIO as GPIO
 LOG = logging.getLogger('rpi2casterd')
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 ON, OFF = True, False
+# GPIO constants
+OUTPUT, INPUT, PULLDOWN, PULLUP = 0, 1, 21, 22
+RISING, FALLING, BOTH = 31, 32, 33
+
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
                         *(str(x) for x in range(1, 15)), 'O15'])
 
@@ -230,9 +234,9 @@ def daemon_setup():
         raise KeyboardInterrupt
 
     # set up the ready LED and shutdown/reboot buttons, if possible
-    LEDS['ready'] = setup_gpio('ready_led_gpio', GPIO.OUT)
-    shdn_button = setup_gpio('shutdown_gpio', GPIO.IN, GPIO.PUD_UP, shutdown)
-    reset_button = setup_gpio('reboot_gpio', GPIO.IN, GPIO.PUD_UP, reboot)
+    LEDS['ready'] = setup_gpio('ready_led_gpio', OUTPUT)
+    shdn_button = setup_gpio('shutdown_gpio', INPUT, PULLUP, shutdown)
+    reset_button = setup_gpio('reboot_gpio', INPUT, PULLUP, reboot)
     # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -588,21 +592,21 @@ class Interface(InterfaceBase):
                 self.emergency_stop = ON
 
         bouncetime = self.config.get('debounce_milliseconds', 5)
-        gpios = dict(sensor=setup_gpio('sensor_gpio', GPIO.IN, edge=GPIO.BOTH,
+        gpios = dict(sensor=setup_gpio('sensor_gpio', INPUT, edge=BOTH,
                                        callbk=update_sensor,
                                        bouncetime=bouncetime),
                      emergency_stop=setup_gpio('emergency_stop_gpio',
-                                               GPIO.IN, edge=GPIO.BOTH,
+                                               INPUT, edge=BOTH,
                                                callbk=update_emergency_stop,
                                                bouncetime=bouncetime),
                      mode_detect=setup_gpio('mode_detect_gpio',
-                                            GPIO.IN, GPIO.PUD_UP),
-                     error_led=setup_gpio('error_led_gpio', GPIO.OUT),
-                     working_led=setup_gpio('working_led_gpio', GPIO.OUT),
-                     air=setup_gpio('air_gpio', GPIO.OUT),
-                     water=setup_gpio('water_gpio', GPIO.OUT),
-                     motor_stop=setup_gpio('motor_stop_gpio', GPIO.OUT),
-                     motor_start=setup_gpio('motor_start_gpio', GPIO.OUT))
+                                            INPUT, PULLUP),
+                     error_led=setup_gpio('error_led_gpio', OUTPUT),
+                     working_led=setup_gpio('working_led_gpio', OUTPUT),
+                     air=setup_gpio('air_gpio', OUTPUT),
+                     water=setup_gpio('water_gpio', OUTPUT),
+                     motor_stop=setup_gpio('motor_stop_gpio', OUTPUT),
+                     motor_start=setup_gpio('motor_start_gpio', OUTPUT))
 
         # does the interface offer the motor start/stop capability?
         motor_feature = gpios.get('motor_start') and gpios.get('motor_stop')
