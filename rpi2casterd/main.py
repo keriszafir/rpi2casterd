@@ -482,7 +482,7 @@ class Interface:
             # as the threaded callback is broken and does NOT always
             # update the self.emergency_stop value properly
             if GPIO.estop_button.value:
-                self.emergency_stop.control(ON)
+                self.emergency_stop_control(ON)
             # now check the emergency stop, as it could have been changed
             # whether by the button, or by the client request
             # also check for timeouts (machine stalling)
