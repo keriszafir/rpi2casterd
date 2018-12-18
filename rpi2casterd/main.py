@@ -689,18 +689,16 @@ class Interface(InterfaceBase):
         """Air supply control: master compressed air solenoid valve.
         no state or None = get the air state,
         anything evaluating to True or False = turn on or off"""
-        new_state = bool(state)
         with suppress(AttributeError):
-            GPIO.air.value = new_state
+            GPIO.air.value = bool(state)
 
     @staticmethod
     def water_control(state):
         """Cooling water control:
         no state or None = get the water valve state,
         anything evaluating to True or False = turn on or off"""
-        new_state = bool(state)
         with suppress(AttributeError):
-            GPIO.air.value = new_state
+            GPIO.water.value = bool(state)
 
     def pump_control(self, state):
         """No state: get the pump status.
@@ -767,10 +765,11 @@ class GPIOCollection:
     """Input/output group with iteration and getting attributes by name"""
     ready_led, error_led, working_led = None, None, None
     motor_start, motor_stop, air, water = None, None, None, None
-    sensor, emergency_stop, mode_detect = None, None, None
+    sensor, estop_button, mode_detect = None, None, None
     shutdown_button, reboot_button = None, None
 
     def __init__(self):
+        LOG.debug('Initializing general purpose input/outputs (GPIOs)...')
         bouncetime = float(CFG.defaults().get('debounce_milliseconds')) / 1000
         ins = dict(shutdown_button=pin('shutdown', IN, hold_time=2),
                    reboot_button=pin('reboot', IN, hold_time=2),
@@ -788,6 +787,7 @@ class GPIOCollection:
         self.inputs = ins
         self.outputs = outs
         self.__dict__.update(**ins, **outs)
+        LOG.debug('GPIO initialization complete.')
 
     def get_values(self):
         """Get the current state of all GPIOs"""
@@ -804,6 +804,7 @@ class GPIOCollection:
 
     def cleanup(self):
         """Clean up all GPIOs"""
+        LOG.info('Turning GPIOs off and releasing them...')
         self.all_off()
         for name, gpio in self.outputs.items():
             with suppress(AttributeError):
@@ -815,6 +816,7 @@ class GPIOCollection:
             self.__dict__.pop(name)
         self.inputs.clear()
         self.outputs.clear()
+        LOG.info('GPIOs off and released.')
 
 
 GPIO = GPIOCollection()
