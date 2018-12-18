@@ -225,7 +225,7 @@ class InterfaceBase:
         # initialize machine state
         self.status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
                            machine=OFF, motor=OFF, sensor=OFF, signals=[],
-                           testing_mode=OFF)
+                           testing_mode=OFF, emergency_stop=OFF)
         self.hardware_setup()
 
     def __str__(self):
@@ -290,16 +290,6 @@ class InterfaceBase:
         self.status.update(pump=bool(state))
 
     @property
-    def sensor_state(self):
-        """Get the sensor state"""
-        return self.status.get('sensor')
-
-    @sensor_state.setter
-    def sensor_state(self, state):
-        """Update the sensor state"""
-        self.status.update(sensor=bool(state))
-
-    @property
     def emergency_stop(self):
         """Get the emergency stop state"""
         return self.status.get('emergency_stop')
@@ -325,7 +315,7 @@ class InterfaceBase:
         timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
         while GPIO.sensor.value != new_state:
             timed_out = time.time() - start_time > timeout
-            if GPIO.emergency_stop.value or self.emergency_stop or timed_out:
+            if GPIO.estop_button.value or self.emergency_stop or timed_out:
                 raise librpi2caster.MachineStopped
             # wait 5ms to ease the load on the CPU
             time.sleep(0.005)
@@ -504,7 +494,7 @@ class Interface(InterfaceBase):
 
         # register callbacks
         GPIO.sensor.when_pressed = update_rpm_meter
-        GPIO.emergency_stop.when_pressed = update_emergency_stop
+        GPIO.estop_button.when_pressed = update_emergency_stop
 
         # does the interface offer the motor start/stop capability?
         motor_feature = GPIO.motor_start and GPIO.motor_stop
@@ -537,7 +527,7 @@ class Interface(InterfaceBase):
         def check_estop():
             """if emergency stop is active, raise MachineStopped"""
             if not suppress_stop:
-                if self.emergency_stop or GPIO.emergency_stop.value:
+                if self.emergency_stop or GPIO.estop_button.value:
                     raise librpi2caster.MachineStopped
 
         try:
@@ -786,8 +776,8 @@ class GPIOCollection:
                    reboot_button=pin('reboot', IN, hold_time=2),
                    sensor=pin('sensor', IN, pull_up=False,
                               bounce_time=bouncetime),
-                   emergency_stop=pin('emergency_stop', IN, pull_up=False,
-                                      bounce_time=0.1),
+                   estop_button=pin('emergency_stop', IN, pull_up=False,
+                                    bounce_time=0.1),
                    mode_detect=pin('mode_detect', IN))
         outs = dict(working_led=pin('working_led', OUT),
                     error_led=pin('error_led', OUT),
