@@ -422,7 +422,7 @@ class Interface:
         app.route('/<device>', methods=ALL_METHODS)(control)
         app.run(self.config.get('address'), self.config.get('port'))
 
-    def _wait_for_sensor(self, new_state, timeout=None, force=False):
+    def _wait_for_sensor(self, new_state, timeout=0, force=False):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -430,13 +430,8 @@ class Interface:
         message = 'Waiting for sensor state {}'.format(new_state)
         LOG.debug(message)
         start_time = time.time()
-        timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
+        wait_time = timeout or self.config.get('sensor_timeout', 5)
         while GPIO.sensor.value != new_state:
-            # check for timeouts (machine stalling)
-            # if that happens, raise the MachineStopped exception
-            timed_out = time.time() - start_time > timeout
-            if timed_out and not force:
-                raise librpi2caster.MachineStopped
             # now check the emergency stop, as it could have been changed
             # whether by the button, or by the client request
             # we HAVE to poll the emergency stop button here,
@@ -445,6 +440,11 @@ class Interface:
             if GPIO.estop_button.value:
                 self.emergency_stop_control(ON)
             if self.emergency_stop and not force:
+                raise librpi2caster.MachineStopped
+            # check for timeouts (machine stalling)
+            # if that happens, raise the MachineStopped exception
+            timed_out = time.time() - start_time > wait_time
+            if timed_out:
                 raise librpi2caster.MachineStopped
             # wait 5ms to ease the load on the CPU
             time.sleep(0.005)
@@ -513,7 +513,8 @@ class Interface:
                 raise librpi2caster.MachineStopped
 
         if force:
-            yield
+            with suppress(librpi2caster.MachineStopped):
+                yield
 
         else:
             # normal operation - machine stalling or emergency stop
@@ -619,9 +620,8 @@ class Interface:
 
         while self.pump:
             # try as long as necessary, minimum two combinations to be sure
-            with suppress(librpi2caster.MachineStopped):
-                self.send_signals(stop_code, force=True)
-                self.send_signals(stop_code, force=True)
+            self.send_signals(stop_code, timeout=120, force=True)
+            self.send_signals(stop_code, timeout=120, force=True)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
