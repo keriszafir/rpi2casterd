@@ -661,16 +661,15 @@ class Interface:
         while self.pump:
             # try as long as necessary
             # temporarily reset the emergency stop state
-            self.emergency_stop_control(OFF)
-            self.is_working = True
+            self.status.update(emergency_stop=OFF, is_working=True)
             # any MachineStopped exceptions normally raised in send_signals
             # must be silenced, and machine stop must be prevented
             with self._handle_machine_stop(suppress_stop=True):
                 self.send_signals(stop_code, timeout=timeout)
                 self.send_signals(stop_code, timeout=timeout)
         # restore the previous emergency stop state
-        self.emergency_stop_control(prev_emergency_stop)
-        self.is_working = was_working
+        self.status.update(emergency_stop=prev_emergency_stop,
+                           is_working=was_working)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
