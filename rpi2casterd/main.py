@@ -640,7 +640,7 @@ class Interface:
         to make sure that the pump is turned off.
         In case of failure, repeat."""
         LOG.info('Pump stop requested.')
-        if self.testing_mode or self.punching_mode:
+        if self.testing_mode or self.punch_mode:
             LOG.info('Not a caster: no need to turn off the pump')
             return
         if not self.pump:
