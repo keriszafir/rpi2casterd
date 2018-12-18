@@ -599,16 +599,14 @@ class Interface:
 
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
+        # force turning the pump off
+        self._pump_stop()
         LOG.debug('Checking if the machine is working...')
         if self.is_working:
             LOG.debug('The machine was working.')
             LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
             GPIO.error_led.value, GPIO.working_led.value = ON, ON
-            # force turning the pump off
-            LOG.info('Stopping the pump...')
-            self._pump_stop()
-            LOG.info('Pump stopped.')
             # turn all off
             self.valves_control(OFF)
             self.signals = []
@@ -659,18 +657,20 @@ class Interface:
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
 
         # save the current emergency stop state
-        old_emergency_stop = self.emergency_stop
+        prev_emergency_stop, was_working = self.emergency_stop, self.is_working
         while self.pump:
             # try as long as necessary
             # temporarily reset the emergency stop state
             self.emergency_stop_control(OFF)
+            self.is_working = True
             # any MachineStopped exceptions normally raised in send_signals
             # must be silenced, and machine stop must be prevented
             with self._handle_machine_stop(suppress_stop=True):
                 self.send_signals(stop_code, timeout=timeout)
                 self.send_signals(stop_code, timeout=timeout)
         # restore the previous emergency stop state
-        self.emergency_stop_control(old_emergency_stop)
+        self.emergency_stop_control(prev_emergency_stop)
+        self.is_working = was_working
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
