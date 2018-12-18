@@ -804,7 +804,7 @@ class Interface:
 
         self.signals = signals
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
-        with self._handle_machine_stop():
+        with self._handle_machine_stop(force=force):
             # stop the machine when emergency stop or sensor timeout happens
             # then bubble the exception up
             rtn()
