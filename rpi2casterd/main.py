@@ -548,7 +548,7 @@ class Interface:
                            wedge_0075=pos_0075, wedge_0005=pos_0005)
 
     @contextmanager
-    def _handle_machine_stop(self, suppress_stop=False):
+    def _handle_machine_stop(self):
         """Make sure that when MachineStopped occurs inside the contextmanager,
         the machine will be stopped and the exception raised."""
         def check_estop():
@@ -561,9 +561,8 @@ class Interface:
             yield
             check_estop()
         except librpi2caster.MachineStopped:
-            if not suppress_stop:
-                self._stop()
-                raise
+            self._stop()
+            raise
 
     def _start(self):
         """Starts the machine. When casting, check if it's running."""
@@ -641,6 +640,9 @@ class Interface:
         to make sure that the pump is turned off.
         In case of failure, repeat."""
         LOG.info('Pump stop requested.')
+        if self.testing_mode or self.punching_mode:
+            LOG.info('Not a caster: no need to turn off the pump')
+            return
         if not self.pump:
             LOG.info('The pump is already off, no need to stop it.')
             return
@@ -658,18 +660,22 @@ class Interface:
 
         # save the current emergency stop state
         prev_emergency_stop, was_working = self.emergency_stop, self.is_working
+        prev_signals, self.signals = self.signals, stop_code
         while self.pump:
             # try as long as necessary
             # temporarily reset the emergency stop state
             self.status.update(emergency_stop=OFF, is_working=True)
-            # any MachineStopped exceptions normally raised in send_signals
-            # must be silenced, and machine stop must be prevented
-            with self._handle_machine_stop(suppress_stop=True):
-                self.send_signals(stop_code, timeout=timeout)
-                self.send_signals(stop_code, timeout=timeout)
+            self.valves_control(OFF)
+            self.valves_control(ON)
+            for state in [ON, OFF, ON, OFF]:
+                with suppress(librpi2caster.MachineStopped):
+                    self._wait_for_sensor(state, timeout=timeout)
+            self.valves_control(OFF)
+            self._update_pump_and_wedges()
+
         # restore the previous emergency stop state
         self.status.update(emergency_stop=prev_emergency_stop,
-                           is_working=was_working)
+                           is_working=was_working, signals=prev_signals)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
@@ -701,7 +707,6 @@ class Interface:
             message = 'Valves on: {}'.format(' '.join(self.signals))
             LOG.debug(message)
             self.output.valves_on(self.signals)
-            self._update_pump_and_wedges()
             self.status.update(valves=ON)
         else:
             LOG.debug('Turning all valves off.')
@@ -780,6 +785,7 @@ class Interface:
             self.valves_control(ON)
             self._wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
+            self._update_pump_and_wedges()
 
         def test():
             """Turn off any previous combination, then send signals."""
@@ -798,6 +804,7 @@ class Interface:
             time.sleep(self.config['punching_on_time'])
             self.valves_control(OFF)
             time.sleep(self.config['punching_off_time'])
+            self._update_pump_and_wedges()
 
         self.signals = signals
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
