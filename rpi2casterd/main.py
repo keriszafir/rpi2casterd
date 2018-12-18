@@ -33,7 +33,6 @@ DEFAULTS = dict(name='Monotype composition caster',
                 shutdown_gpio='24', shutdown_command='shutdown -h now',
                 reboot_gpio='23', reboot_command='shutdown -r now',
                 startup_timeout='30', sensor_timeout='5',
-                pump_stop_timeout='120',
                 punching_on_time='0.2', punching_off_time='0.3',
                 debounce_milliseconds='25',
                 ready_led_gpio='18', sensor_gpio='17',
@@ -95,55 +94,6 @@ def parse_signals(input_signals):
                 arranged.appendleft(other)
                 arranged.appendleft('N')
     return list(arranged)
-
-
-def parse_configuration(source):
-    """Get the interface parameters from a config parser section"""
-    def signals(input_string):
-        """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
-        Allow only known defined signals."""
-        raw = [x.strip().upper() for x in input_string.split(',')]
-        return [x for x in raw if x in OUTPUT_SIGNALS]
-
-    def integer(input_string):
-        """Convert a decimal, octal, binary or hexadecimal string to int"""
-        with suppress(TypeError):
-            return int(input_string, 0)
-
-    def get(parameter, convert=str):
-        """Gets a value from a specified source for a given parameter,
-        converts it to a desired data type"""
-        return convert(source.get(parameter))
-
-    def address_and_port(input_string):
-        """Get an IP or DNS address and a port"""
-        try:
-            address, _port = input_string.split(':')
-            port = int(_port)
-        except ValueError:
-            address, port = input_string, 23017
-        return address, port
-
-    config = OrderedDict()
-
-    # get timings
-    config['name'] = get('name', str)
-    config['address'], config['port'] = get('listen_address', address_and_port)
-    config['startup_timeout'] = get('startup_timeout', float)
-    config['sensor_timeout'] = get('sensor_timeout', float)
-    config['pump_stop_timeout'] = get('pump_stop_timeout', float)
-    config['punching_on_time'] = get('punching_on_time', float)
-    config['punching_off_time'] = get('punching_off_time', float)
-
-    # determine the output driver and settings
-    config['output_driver'] = get('output_driver').lower()
-    config['i2c_bus'] = get('i2c_bus', integer)
-    config['mcp0_address'] = get('mcp0_address', integer)
-    config['mcp1_address'] = get('mcp1_address', integer)
-    valves = dict(valve1=get('valve1', signals), valve2=get('valve2', signals),
-                  valve3=get('valve3', signals), valve4=get('valve4', signals))
-    config['signal_mappings'] = valves
-    return config
 
 
 def daemon_setup():
@@ -315,7 +265,6 @@ class Interface:
                                                           address_and_port)
         self.config['startup_timeout'] = get('startup_timeout', float)
         self.config['sensor_timeout'] = get('sensor_timeout', float)
-        self.config['pump_stop_timeout'] = get('pump_stop_timeout', float)
         self.config['punching_on_time'] = get('punching_on_time', float)
         self.config['punching_off_time'] = get('punching_off_time', float)
 
@@ -473,7 +422,7 @@ class Interface:
         app.route('/<device>', methods=ALL_METHODS)(control)
         app.run(self.config.get('address'), self.config.get('port'))
 
-    def _wait_for_sensor(self, new_state, timeout=None):
+    def _wait_for_sensor(self, new_state, timeout=None, force=False):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -486,7 +435,7 @@ class Interface:
             # check for timeouts (machine stalling)
             # if that happens, raise the MachineStopped exception
             timed_out = time.time() - start_time > timeout
-            if timed_out:
+            if timed_out and not force:
                 raise librpi2caster.MachineStopped
             # now check the emergency stop, as it could have been changed
             # whether by the button, or by the client request
@@ -495,7 +444,7 @@ class Interface:
             # update the self.emergency_stop value properly
             if GPIO.estop_button.value:
                 self.emergency_stop_control(ON)
-            if self.emergency_stop:
+            if self.emergency_stop and not force:
                 raise librpi2caster.MachineStopped
             # wait 5ms to ease the load on the CPU
             time.sleep(0.005)
@@ -664,9 +613,6 @@ class Interface:
         wedge_0005 = self.status['wedge_0005']
         stop_code = 'NJS0005{}'.format(wedge_0005)
 
-        # use longer timeout
-        timeout = self.config.get('pump_stop_timeout')
-
         # store previous LED states; light the red error LED only
         error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
@@ -674,8 +620,8 @@ class Interface:
         while self.pump:
             # try as long as necessary, minimum two combinations to be sure
             with suppress(librpi2caster.MachineStopped):
-                self.send_signals(stop_code, timeout=timeout, force=True)
-                self.send_signals(stop_code, timeout=timeout, force=True)
+                self.send_signals(stop_code, force=True)
+                self.send_signals(stop_code, force=True)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
@@ -781,9 +727,9 @@ class Interface:
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self._wait_for_sensor(ON, timeout=wait)
+            self._wait_for_sensor(ON, timeout=wait, force=force)
             self.valves_control(ON)
-            self._wait_for_sensor(OFF, timeout=wait)
+            self._wait_for_sensor(OFF, timeout=wait, force=force)
             self.valves_control(OFF)
             self._update_pump_and_wedges()
 
