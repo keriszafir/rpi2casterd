@@ -468,7 +468,7 @@ class Interface:
         app.route('/<device>', methods=ALL_METHODS)(control)
         app.run(self.config.get('address'), self.config.get('port'))
 
-    def _wait_for_sensor(self, new_state, timeout=None):
+    def _wait_for_sensor(self, new_state, timeout=None, ignore_stop=False):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -478,18 +478,21 @@ class Interface:
         start_time = time.time()
         timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
         while GPIO.sensor.value != new_state:
+            # check for timeouts (machine stalling)
+            # if that happens, raise the MachineStopped exception
             timed_out = time.time() - start_time > timeout
+            if timed_out:
+                raise librpi2caster.MachineStopped
+            # now check the emergency stop, as it could have been changed
+            # whether by the button, or by the client request
             # we HAVE to poll the emergency stop button here,
             # as the threaded callback is broken and does NOT always
             # update the self.emergency_stop value properly
-            if GPIO.estop_button.value:
-                self.emergency_stop_control(ON)
-            # now check the emergency stop, as it could have been changed
-            # whether by the button, or by the client request
-            # also check for timeouts (machine stalling)
-            # if that happens, raise the MachineStopped exception
-            if self.emergency_stop or timed_out:
-                raise librpi2caster.MachineStopped
+            if not ignore_stop:
+                if GPIO.estop_button.value:
+                    self.emergency_stop_control(ON)
+                if self.emergency_stop:
+                    raise librpi2caster.MachineStopped
             # wait 5ms to ease the load on the CPU
             time.sleep(0.005)
 
@@ -659,23 +662,20 @@ class Interface:
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
 
         # save the current emergency stop state
-        prev_emergency_stop, was_working = self.emergency_stop, self.is_working
         prev_signals, self.signals = self.signals, stop_code
         while self.pump:
             # try as long as necessary
-            # temporarily reset the emergency stop state
-            self.status.update(emergency_stop=OFF, is_working=True)
-            self.valves_control(OFF)
-            self.valves_control(ON)
-            for state in [ON, OFF, ON, OFF]:
-                with suppress(librpi2caster.MachineStopped):
-                    self._wait_for_sensor(state, timeout=timeout)
-            self.valves_control(OFF)
-            self._update_pump_and_wedges()
+            with suppress(librpi2caster.MachineStopped):
+                for state in [ON, OFF, ON, OFF]:
+                    self.valves_control(OFF)
+                    self.valves_control(ON)
+                    self._wait_for_sensor(state, timeout=timeout,
+                                          ignore_stop=True)
+                    self.valves_control(OFF)
+                self._update_pump_and_wedges()
 
         # restore the previous emergency stop state
-        self.status.update(emergency_stop=prev_emergency_stop,
-                           is_working=was_working, signals=prev_signals)
+        self.status.update(signals=prev_signals)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
