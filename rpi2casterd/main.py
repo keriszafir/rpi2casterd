@@ -103,7 +103,7 @@ def daemon_setup():
         command = CFG.defaults().get('shutdown_command')
         LOG.info('Shutting down...')
         with suppress(AttributeError):
-            GPIO.ready_led.blink(0.5, 0.5)
+            GPIO.ready_led.blink(0.5, 0.5, n=3, background=False)
         subprocess.run([x.strip() for x in command.split(' ')])
 
     def reboot():
@@ -111,7 +111,7 @@ def daemon_setup():
         command = CFG.defaults().get('reboot_command')
         LOG.info('Rebooting...')
         with suppress(AttributeError):
-            GPIO.ready_led.blink(0.2, 0.2)
+            GPIO.ready_led.blink(0.2, 0.2, n=7, background=False)
         subprocess.run([x.strip() for x in command.split(' ')])
 
     def signal_handler(*_):
