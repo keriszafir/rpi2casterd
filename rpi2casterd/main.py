@@ -54,7 +54,7 @@ def journald_setup():
     """Set up and start journald logging"""
     if DEBUG_MODE:
         LOG.setLevel(logging.DEBUG)
-        LOG.addHandler(logging.StreamHandler(sys.stdout))
+        LOG.addHandler(logging.StreamHandler(sys.stderr))
     with suppress(ImportError):
         from systemd.journal import JournalHandler
         journal_handler = JournalHandler()
@@ -564,10 +564,8 @@ class Interface:
                 raise librpi2caster.MachineStopped
 
         if force:
-            # don't care about the emergency stop
-            # any exceptions caught here will not be propagated
-            with suppress(librpi2caster.MachineStopped):
-                yield
+            yield
+
         else:
             # normal operation - machine stalling or emergency stop
             # will stop the machine and propagate the exception
@@ -675,8 +673,9 @@ class Interface:
 
         while self.pump:
             # try as long as necessary, minimum two combinations to be sure
-            self.send_signals(stop_code, timeout=timeout, force=True)
-            self.send_signals(stop_code, timeout=timeout, force=True)
+            with suppress(librpi2caster.MachineStopped):
+                self.send_signals(stop_code, timeout=timeout, force=True)
+                self.send_signals(stop_code, timeout=timeout, force=True)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
