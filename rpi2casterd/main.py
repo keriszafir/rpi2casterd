@@ -184,13 +184,11 @@ def main():
     """Starts the application. Contains web API subroutines."""
     journald_setup()
     interface = None
-    config = CFG.defaults()
     try:
         # initialize hardware
+        GPIO.initialize()
         daemon_setup()
-        # interface configuration
-        settings = parse_configuration(config)
-        interface = Interface(settings)
+        interface = Interface()
         GPIO.ready_led.on()
         # start the web API for communicating with client
         interface.webapi()
@@ -211,21 +209,21 @@ def main():
     finally:
         # make sure the GPIOs are de-configured properly
         with suppress(AttributeError):
-            interface.stop()
+            interface.machine_control(OFF)
         GPIO.cleanup()
 
 
-class InterfaceBase:
+class Interface:
     """Basic data structures of an interface"""
-    def __init__(self, config_dict):
-        self.config = config_dict
-        self.output = None
+    def __init__(self):
+        self.config, self.output = OrderedDict(), None
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
         # initialize machine state
         self.status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
-                           machine=OFF, motor=OFF, sensor=OFF, signals=[],
-                           testing_mode=OFF, emergency_stop=OFF)
+                           working=False, motor=OFF, signals=[],
+                           testing_mode=False, emergency_stop=False)
+        self.configure()
         self.hardware_setup()
 
     def __str__(self):
@@ -234,12 +232,7 @@ class InterfaceBase:
     @property
     def is_working(self):
         """Get the machine working status"""
-        return self.status.get('machine')
-
-    @is_working.setter
-    def is_working(self, state):
-        """Set the machine working state"""
-        self.status.update(machine=bool(state))
+        return self.status.get('working')
 
     @property
     def punch_mode(self):
@@ -250,11 +243,6 @@ class InterfaceBase:
     def testing_mode(self):
         """Check if interface is in testing mode"""
         return self.status.get('testing_mode')
-
-    @testing_mode.setter
-    def testing_mode(self, state):
-        """Update the testing mode"""
-        self.status.update(testing_mode=bool(state))
 
     @property
     def signals(self):
@@ -281,106 +269,103 @@ class InterfaceBase:
 
     @property
     def pump(self):
-        """Check the pump state"""
+        """Get the pump state"""
         return self.status.get('pump')
-
-    @pump.setter
-    def pump(self, state):
-        """Set the pump state"""
-        self.status.update(pump=bool(state))
 
     @property
     def emergency_stop(self):
         """Get the emergency stop state"""
         return self.status.get('emergency_stop')
 
-    @staticmethod
-    def hardware_setup():
-        """Nothing to do."""
-        pass
+    def configure(self):
+        """Read configuration from CFG and configure the interface."""
+        def signals(input_string):
+            """Convert 'a,b,c,d,e' -> ['A', 'B', 'C', 'D', 'E'].
+            Allow only known defined signals."""
+            raw = [x.strip().upper() for x in input_string.split(',')]
+            return [x for x in raw if x in OUTPUT_SIGNALS]
 
-    def wait_for_sensor(self, new_state, timeout=None):
-        """Wait until the machine cycle sensor changes its state
-        to the desired value (True or False).
-        If no state change is registered in the given time,
-        raise MachineStopped."""
-        message = 'Waiting for sensor state {}'.format(new_state)
-        LOG.debug(message)
-        start_time = time.time()
-        timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
-        while GPIO.sensor.value != new_state:
-            timed_out = time.time() - start_time > timeout
-            # we HAVE to poll the emergency stop button here,
-            # as the threaded callback is broken and does NOT always
-            # update the self.emergency_stop value properly
-            if GPIO.estop_button.value:
-                self.emergency_stop.control(ON)
-            # now check the emergency stop, as it could have been changed
-            # whether by the button, or by the client request
-            # also check for timeouts (machine stalling)
-            # if that happens, raise the MachineStopped exception
-            if self.emergency_stop or timed_out:
-                raise librpi2caster.MachineStopped
-            # wait 5ms to ease the load on the CPU
-            time.sleep(0.005)
+        def integer(input_string):
+            """Convert a decimal, octal, binary or hexadecimal string to int"""
+            with suppress(TypeError):
+                return int(input_string, 0)
 
-    def rpm(self):
-        """Speed meter for rpi2casterd"""
-        events = self.meter_events
-        sensor_timeout = self.config.get('sensor_timeout', 5)
+        def get(parameter, convert=str):
+            """Gets a value from a specified source for a given parameter,
+            converts it to a desired data type"""
+            return convert(CFG.defaults().get(parameter))
+
+        def address_and_port(input_string):
+            """Get an IP or DNS address and a port"""
+            try:
+                address, _port = input_string.split(':')
+                port = int(_port)
+            except ValueError:
+                address, port = input_string, 23017
+            return address, port
+
+        # get timings
+        self.config['name'] = get('name', str)
+        self.config['address'], self.config['port'] = get('listen_address',
+                                                          address_and_port)
+        self.config['startup_timeout'] = get('startup_timeout', float)
+        self.config['sensor_timeout'] = get('sensor_timeout', float)
+        self.config['pump_stop_timeout'] = get('pump_stop_timeout', float)
+        self.config['punching_on_time'] = get('punching_on_time', float)
+        self.config['punching_off_time'] = get('punching_off_time', float)
+
+        # determine the output driver and settings
+        self.config['output_driver'] = get('output_driver').lower()
+        self.config['i2c_bus'] = get('i2c_bus', integer)
+        self.config['mcp0_address'] = get('mcp0_address', integer)
+        self.config['mcp1_address'] = get('mcp1_address', integer)
+        self.config['signal_mappings'] = dict(valve1=get('valve1', signals),
+                                              valve2=get('valve2', signals),
+                                              valve3=get('valve3', signals),
+                                              valve4=get('valve4', signals))
+
+    def hardware_setup(self):
+        """Configure the inputs and outputs.
+        Raise ConfigurationError if output name is not recognized,
+        or modules supporting the hardware backends cannot be imported."""
+        def update_rpm_meter():
+            """Update the RPM event counter"""
+            LOG.debug('Photocell sensor activated')
+            self.meter_events.append(time.time())
+
+        def update_emergency_stop():
+            """Check and update the emergency stop status"""
+            LOG.error('Emergency stop button pressed!')
+            self.emergency_stop_control(ON)
+
+        # register callbacks
+        GPIO.sensor.when_pressed = update_rpm_meter
+        GPIO.estop_button.when_pressed = update_emergency_stop
+
+        # does the interface offer the motor start/stop capability?
+        motor_feature = GPIO.motor_start and GPIO.motor_stop
+        self.config['has_motor_control'] = bool(motor_feature)
+
+        # use a GPIO pin for sensing punch/cast mode
+        self.config['punch_mode'] = not bool(GPIO.mode_detect.value)
+
+        # output setup:
         try:
-            # how long in seconds is it from the first to last event?
-            duration = events[-1] - events[0]
-            if not duration or duration > sensor_timeout:
-                # single event or waited too long
-                return 0
-            # 3 timestamps = 2 rotations
-            per_second = (len(events) - 1) / duration
-            rpm = round(per_second * 60, 2)
-            return rpm
-        except IndexError:
-            # not enough events / measurement points
-            return 0
-
-    def update_pump_and_wedges(self):
-        """Check the wedge positions and return them."""
-        def found(code):
-            """check if code was found in a combination"""
-            return set(code).issubset(self.signals)
-
-        # check the previous wedge positions and pump state
-        pos_0075 = self.status.get('wedge_0075')
-        pos_0005 = self.status.get('wedge_0005')
-        pump_working = self.status.get('pump')
-        # check 0005 wedge position:
-        # find the earliest row number or default to 15
-        if found(['0005']) or found('NJ'):
-            pump_working = OFF
-            for pos in range(1, 15):
-                if str(pos) in self.signals:
-                    pos_0005 = pos
-                    break
+            output_name = self.config.get('output_driver')
+            if output_name == 'smbus':
+                from rpi2casterd.smbus import SMBusOutput as output
+            elif output_name == 'wiringpi':
+                from rpi2casterd.wiringpi import WiringPiOutput as output
             else:
-                pos_0005 = 15
+                raise NameError
+            self.output = output(self.config)
+        except NameError:
+            raise librpi2caster.ConfigurationError('Unknown output: {}.'
+                                                   .format(output_name))
+        except ImportError:
+            raise librpi2caster.ConfigurationError('{}: module not installed'
+                                                   .format(output_name))
 
-        # check 0075 wedge position and determine the pump status:
-        # find the earliest row number or default to 15
-        if found(['0075']) or found('NK'):
-            # 0075 always turns the pump on
-            pump_working = ON
-            for pos in range(1, 15):
-                if str(pos) in self.signals:
-                    pos_0075 = pos
-                    break
-            else:
-                pos_0075 = 15
-
-        self.status.update(pump=bool(pump_working),
-                           wedge_0075=pos_0075, wedge_0005=pos_0005)
-
-
-class Interface(InterfaceBase):
-    """Hardware control interface"""
     def webapi(self):
         """JSON web API for communicating with the casting software."""
         def handle_request(routine):
@@ -416,7 +401,7 @@ class Interface(InterfaceBase):
                 request_data = request.get_json() or {}
                 self.status.update(**request_data)
             status = self.status
-            status.update(speed='{}rpm'.format(self.rpm()),
+            status.update(speed='{}rpm'.format(self._rpm()),
                           **GPIO.get_values())
             return status
 
@@ -482,50 +467,87 @@ class Interface(InterfaceBase):
         app.route('/<device>', methods=ALL_METHODS)(control)
         app.run(self.config.get('address'), self.config.get('port'))
 
-    def hardware_setup(self):
-        """Configure the inputs and outputs.
-        Raise ConfigurationError if output name is not recognized,
-        or modules supporting the hardware backends cannot be imported."""
-        def update_rpm_meter():
-            """Update the RPM event counter"""
-            LOG.debug('Photocell sensor activated')
-            self.meter_events.append(time.time())
+    def _wait_for_sensor(self, new_state, timeout=None):
+        """Wait until the machine cycle sensor changes its state
+        to the desired value (True or False).
+        If no state change is registered in the given time,
+        raise MachineStopped."""
+        message = 'Waiting for sensor state {}'.format(new_state)
+        LOG.debug(message)
+        start_time = time.time()
+        timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
+        while GPIO.sensor.value != new_state:
+            timed_out = time.time() - start_time > timeout
+            # we HAVE to poll the emergency stop button here,
+            # as the threaded callback is broken and does NOT always
+            # update the self.emergency_stop value properly
+            if GPIO.estop_button.value:
+                self.emergency_stop.control(ON)
+            # now check the emergency stop, as it could have been changed
+            # whether by the button, or by the client request
+            # also check for timeouts (machine stalling)
+            # if that happens, raise the MachineStopped exception
+            if self.emergency_stop or timed_out:
+                raise librpi2caster.MachineStopped
+            # wait 5ms to ease the load on the CPU
+            time.sleep(0.005)
 
-        def update_emergency_stop():
-            """Check and update the emergency stop status"""
-            LOG.error('Emergency stop button pressed!')
-            self.emergency_stop_control(ON)
-
-        # register callbacks
-        GPIO.sensor.when_pressed = update_rpm_meter
-        GPIO.estop_button.when_pressed = update_emergency_stop
-
-        # does the interface offer the motor start/stop capability?
-        motor_feature = GPIO.motor_start and GPIO.motor_stop
-        self.config['has_motor_control'] = bool(motor_feature)
-
-        # use a GPIO pin for sensing punch/cast mode
-        self.config['punch_mode'] = not bool(GPIO.mode_detect.value)
-
-        # output setup:
+    def _rpm(self):
+        """Speed meter for rpi2casterd"""
+        events = self.meter_events
+        sensor_timeout = self.config.get('sensor_timeout', 5)
         try:
-            output_name = self.config.get('output_driver')
-            if output_name == 'smbus':
-                from rpi2casterd.smbus import SMBusOutput as output
-            elif output_name == 'wiringpi':
-                from rpi2casterd.wiringpi import WiringPiOutput as output
+            # how long in seconds is it from the first to last event?
+            duration = events[-1] - events[0]
+            if not duration or duration > sensor_timeout:
+                # single event or waited too long
+                return 0
+            # 3 timestamps = 2 rotations
+            per_second = (len(events) - 1) / duration
+            rpm = round(per_second * 60, 2)
+            return rpm
+        except IndexError:
+            # not enough events / measurement points
+            return 0
+
+    def _update_pump_and_wedges(self):
+        """Check the wedge positions and return them."""
+        def found(code):
+            """check if code was found in a combination"""
+            return set(code).issubset(self.signals)
+
+        # check the previous wedge positions and pump state
+        pos_0075 = self.status.get('wedge_0075')
+        pos_0005 = self.status.get('wedge_0005')
+        pump_working = self.pump
+        # check 0005 wedge position:
+        # find the earliest row number or default to 15
+        if found(['0005']) or found('NJ'):
+            pump_working = OFF
+            for pos in range(1, 15):
+                if str(pos) in self.signals:
+                    pos_0005 = pos
+                    break
             else:
-                raise NameError
-            self.output = output(self.config)
-        except NameError:
-            raise librpi2caster.ConfigurationError('Unknown output: {}.'
-                                                   .format(output_name))
-        except ImportError:
-            raise librpi2caster.ConfigurationError('{}: module not installed'
-                                                   .format(output_name))
+                pos_0005 = 15
+
+        # check 0075 wedge position and determine the pump status:
+        # find the earliest row number or default to 15
+        if found(['0075']) or found('NK'):
+            # 0075 always turns the pump on
+            pump_working = ON
+            for pos in range(1, 15):
+                if str(pos) in self.signals:
+                    pos_0075 = pos
+                    break
+            else:
+                pos_0075 = 15
+
+        self.status.update(pump=bool(pump_working),
+                           wedge_0075=pos_0075, wedge_0005=pos_0005)
 
     @contextmanager
-    def handle_machine_stop(self, suppress_stop=False):
+    def _handle_machine_stop(self, suppress_stop=False):
         """Make sure that when MachineStopped occurs inside the contextmanager,
         the machine will be stopped and the exception raised."""
         def check_estop():
@@ -540,10 +562,10 @@ class Interface(InterfaceBase):
             check_estop()
         except librpi2caster.MachineStopped:
             if not suppress_stop:
-                self.stop()
+                self._stop()
                 raise
 
-    def start(self):
+    def _start(self):
         """Starts the machine. When casting, check if it's running."""
         # check if the interface is already busy
         LOG.info('Starting the machine...')
@@ -551,7 +573,7 @@ class Interface(InterfaceBase):
             message = 'Cannot do that - the machine is already working.'
             LOG.info(message)
             raise librpi2caster.InterfaceBusy(message)
-        self.is_working = True
+        self.status.update(working=True)
         GPIO.error_led.value, GPIO.working_led.value = ON, ON
         # reset the RPM counter
         self.meter_events.clear()
@@ -568,14 +590,14 @@ class Interface(InterfaceBase):
             # check machine rotation
             timeout = self.config.get('startup_timeout', 5)
             for _ in range(3):
-                with self.handle_machine_stop():
-                    self.wait_for_sensor(ON, timeout=timeout)
-                    self.wait_for_sensor(OFF, timeout=timeout)
+                with self._handle_machine_stop():
+                    self._wait_for_sensor(ON, timeout=timeout)
+                    self._wait_for_sensor(OFF, timeout=timeout)
         LOG.info('Machine started.')
         # properly initialized => mark it as working
         GPIO.error_led.value = OFF
 
-    def stop(self):
+    def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
         LOG.debug('Checking if the machine is working...')
         if self.is_working:
@@ -583,11 +605,10 @@ class Interface(InterfaceBase):
             LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
             GPIO.error_led.value, GPIO.working_led.value = ON, ON
-            while self.pump:
-                # force turning the pump off
-                LOG.info('Stopping the pump...')
-                self.pump_stop(suppress_stop=True)
-                LOG.info('Pump stopped.')
+            # force turning the pump off
+            LOG.info('Stopping the pump...')
+            self._pump_stop()
+            LOG.info('Pump stopped.')
             # turn all off
             self.valves_control(OFF)
             self.signals = []
@@ -600,24 +621,23 @@ class Interface(InterfaceBase):
             # turn off the red/green/orange LED
             GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
             # release the interface so others can claim it
-            self.is_working = False
-            self.testing_mode = False
+            self.status.update(working=False, testing_mode=False)
             LOG.info('Machine stopped.')
         else:
             LOG.debug('The machine was already stopped. Skipping...')
 
-    def pump_start(self):
+    def _pump_start(self):
         """Start the pump."""
         # get the current 0075 wedge position and preserve it
         LOG.info('Pump start requested.')
         if self.pump:
             LOG.info('The pump was working, no need to start.')
-        if not self.pump:
+        else:
             LOG.info('Starting the pump...')
             wedge_0075 = self.status['wedge_0075']
             self.send_signals('NKS0075{}'.format(wedge_0075))
 
-    def pump_stop(self, suppress_stop=False):
+    def _pump_stop(self):
         """Stop the pump if it is working.
         This function will send the pump stop combination (NJS 0005) twice
         to make sure that the pump is turned off.
@@ -644,10 +664,9 @@ class Interface(InterfaceBase):
         # or client emergency stop calls
         # try as long as necessary
         while self.pump:
-            with suppress(librpi2caster.InterfaceNotStarted):
-                with self.handle_machine_stop(suppress_stop=suppress_stop):
-                    self.send_signals(stop_code, timeout=timeout)
-                    self.send_signals(stop_code, timeout=timeout)
+            with self._handle_machine_stop(suppress_stop=True):
+                self.send_signals(stop_code, timeout=timeout)
+                self.send_signals(stop_code, timeout=timeout)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
@@ -666,10 +685,10 @@ class Interface(InterfaceBase):
         """
         if state:
             LOG.info('Requesting machine start.')
-            self.start()
+            self._start()
         else:
             LOG.info('Requesting machine stop.')
-            self.stop()
+            self._stop()
 
     def valves_control(self, state):
         """Turn valves on or off, check valve status.
@@ -679,7 +698,7 @@ class Interface(InterfaceBase):
             message = 'Valves on: {}'.format(' '.join(self.signals))
             LOG.debug(message)
             self.output.valves_on(self.signals)
-            self.update_pump_and_wedges()
+            self._update_pump_and_wedges()
             self.status.update(valves=ON)
         else:
             LOG.debug('Turning all valves off.')
@@ -728,9 +747,9 @@ class Interface(InterfaceBase):
         Anything evaluating to True or False: start or stop the pump"""
         # log messages are implemented in pump_start and pump_stop
         if state:
-            self.pump_start()
+            self._pump_start()
         else:
-            self.pump_stop()
+            self._pump_stop()
 
     def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
@@ -754,15 +773,15 @@ class Interface(InterfaceBase):
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self.wait_for_sensor(ON, timeout=wait)
+            self._wait_for_sensor(ON, timeout=wait)
             self.valves_control(ON)
-            self.wait_for_sensor(OFF, timeout=wait)
+            self._wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
 
         def test():
             """Turn off any previous combination, then send signals."""
             with suppress(librpi2caster.InterfaceBusy):
-                self.start()
+                self._start()
             # change the active combination
             self.valves_control(OFF)
             self.valves_control(ON)
@@ -770,7 +789,7 @@ class Interface(InterfaceBase):
         def punch():
             """Timer-driven ribbon perforator."""
             with suppress(librpi2caster.InterfaceBusy):
-                self.start()
+                self._start()
             # timer-driven operation
             self.valves_control(ON)
             time.sleep(self.config['punching_on_time'])
@@ -779,7 +798,7 @@ class Interface(InterfaceBase):
 
         self.signals = signals
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
-        with self.handle_machine_stop():
+        with self._handle_machine_stop():
             # stop the machine when emergency stop or sensor timeout happens
             # then bubble the exception up
             rtn()
@@ -791,8 +810,10 @@ class GPIOCollection:
     motor_start, motor_stop, air, water = None, None, None, None
     sensor, estop_button, mode_detect = None, None, None
     shutdown_button, reboot_button = None, None
+    inputs, outputs = dict(), dict()
 
-    def __init__(self):
+    def initialize(self):
+        """Populate self.inputs and self.outputs with GPIO definitions"""
         LOG.debug('Initializing general purpose input/outputs (GPIOs)...')
         bouncetime = float(CFG.defaults().get('debounce_milliseconds')) / 1000
         ins = dict(shutdown_button=pin('shutdown', IN, hold_time=2),
