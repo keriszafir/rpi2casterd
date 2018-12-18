@@ -337,6 +337,7 @@ class Interface:
             """Check and update the emergency stop status"""
             LOG.error('Emergency stop button pressed!')
             self.emergency_stop_control(ON)
+            self._stop()
 
         # register callbacks
         GPIO.sensor.when_pressed = update_rpm_meter
