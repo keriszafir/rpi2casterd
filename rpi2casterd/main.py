@@ -22,7 +22,7 @@ from flask.globals import request
 from gpiozero import Button, LED, GPIOPinMissing, GPIOPinInUse
 
 LOG = logging.getLogger('rpi2casterd')
-DEBUG_MODE = True
+DEBUG_MODE = False
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 IN, OUT = ON, OFF = True, False
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
@@ -602,8 +602,8 @@ class Interface:
         to make sure that the pump is turned off.
         In case of failure, repeat."""
         LOG.info('Pump stop requested.')
-        if self.testing_mode or self.punch_mode:
-            LOG.info('Not a caster: no need to turn off the pump')
+        if self.testing_mode:
+            LOG.info('No need to turn off the pump in testing mode.')
             return
         if not self.pump:
             LOG.info('The pump is already off, no need to stop it.')
