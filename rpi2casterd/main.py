@@ -468,7 +468,7 @@ class Interface:
         app.route('/<device>', methods=ALL_METHODS)(control)
         app.run(self.config.get('address'), self.config.get('port'))
 
-    def _wait_for_sensor(self, new_state, timeout=None, ignore_stop=False):
+    def _wait_for_sensor(self, new_state, timeout=None):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -488,11 +488,10 @@ class Interface:
             # we HAVE to poll the emergency stop button here,
             # as the threaded callback is broken and does NOT always
             # update the self.emergency_stop value properly
-            if not ignore_stop:
-                if GPIO.estop_button.value:
-                    self.emergency_stop_control(ON)
-                if self.emergency_stop:
-                    raise librpi2caster.MachineStopped
+            if GPIO.estop_button.value:
+                self.emergency_stop_control(ON)
+            if self.emergency_stop:
+                raise librpi2caster.MachineStopped
             # wait 5ms to ease the load on the CPU
             time.sleep(0.005)
 
@@ -560,8 +559,13 @@ class Interface:
                 raise librpi2caster.MachineStopped
 
         if force:
-            yield
+            # don't care about the emergency stop
+            # any exceptions caught here will not be propagated
+            with suppress(librpi2caster.MachineStopped):
+                yield
         else:
+            # normal operation - machine stalling or emergency stop
+            # will stop the machine and propagate the exception
             try:
                 check_estop()
                 yield
@@ -778,9 +782,9 @@ class Interface:
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self._wait_for_sensor(ON, timeout=wait, ignore_stop=force)
+            self._wait_for_sensor(ON, timeout=wait)
             self.valves_control(ON)
-            self._wait_for_sensor(OFF, timeout=wait, ignore_stop=force)
+            self._wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
             self._update_pump_and_wedges()
 
