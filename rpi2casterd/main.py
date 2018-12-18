@@ -13,6 +13,7 @@ import configparser
 import logging
 import signal
 import subprocess
+import sys
 import time
 
 import librpi2caster
@@ -21,6 +22,7 @@ from flask.globals import request
 from gpiozero import Button, LED, GPIOPinMissing, GPIOPinInUse
 
 LOG = logging.getLogger('rpi2casterd')
+DEBUG_MODE = True
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 IN, OUT = ON, OFF = True, False
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
@@ -50,12 +52,15 @@ CFG.read(['/usr/lib/rpi2casterd/rpi2casterd.conf', '/etc/rpi2casterd.conf'])
 
 def journald_setup():
     """Set up and start journald logging"""
+    if DEBUG_MODE:
+        LOG.setLevel(logging.DEBUG)
+        LOG.addHandler(logging.StreamHandler(sys.stdout))
     with suppress(ImportError):
         from systemd.journal import JournalHandler
         journal_handler = JournalHandler()
         log_entry_format = '[%(levelname)s] %(message)s'
         journal_handler.setFormatter(logging.Formatter(log_entry_format))
-        LOG.setLevel(logging.DEBUG)
+        LOG.setLevel(logging.INFO)
         LOG.addHandler(journal_handler)
 
 
