@@ -561,8 +561,6 @@ class Interface:
 
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
-        # force turning the pump off
-        self._pump_stop()
         LOG.debug('Checking if the machine is working...')
         if self.is_working:
             LOG.debug('The machine was working.')
@@ -572,6 +570,8 @@ class Interface:
             # turn all off
             self.valves_control(OFF)
             self.signals = []
+            # force turning the pump off
+            self._pump_stop()
             if not self.punch_mode and not self.testing_mode:
                 # turn off the motor and cooling water
                 self.motor_control(OFF)
@@ -583,6 +583,8 @@ class Interface:
             # release the interface so others can claim it
             self.status.update(working=False, testing_mode=False)
             LOG.info('Machine stopped.')
+        elif self.pump:
+            self._pump_stop()
         else:
             LOG.debug('The machine was already stopped. Skipping...')
 
