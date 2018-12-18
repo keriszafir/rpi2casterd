@@ -620,8 +620,9 @@ class Interface:
 
         while self.pump:
             # try as long as necessary, minimum two combinations to be sure
-            self.send_signals(stop_code, timeout=120, force=True)
-            self.send_signals(stop_code, timeout=120, force=True)
+            self.send_signals(stop_code, timeout=120, pump_stop_mode=True)
+            self.send_signals(stop_code, timeout=120, pump_stop_mode=True)
+            self._update_pump_and_wedges()
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
@@ -705,7 +706,7 @@ class Interface:
         else:
             self._pump_stop()
 
-    def send_signals(self, signals, timeout=None, force=False):
+    def send_signals(self, signals, timeout=None, pump_stop_mode=False):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -722,16 +723,17 @@ class Interface:
             wait for sensor to go OFF, turn off the valves.
             """
             # the interface must be started beforehand if we want to cast
-            if not force and not self.is_working:
+            if not pump_stop_mode and not self.is_working:
                 raise librpi2caster.InterfaceNotStarted
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self._wait_for_sensor(ON, timeout=wait, force=force)
+            self._wait_for_sensor(ON, timeout=wait, force=pump_stop_mode)
             self.valves_control(ON)
-            self._wait_for_sensor(OFF, timeout=wait, force=force)
+            self._wait_for_sensor(OFF, timeout=wait, force=pump_stop_mode)
             self.valves_control(OFF)
-            self._update_pump_and_wedges()
+            if not pump_stop_mode:
+                self._update_pump_and_wedges()
 
         def test():
             """Turn off any previous combination, then send signals."""
@@ -754,7 +756,7 @@ class Interface:
 
         self.signals = signals
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
-        with self._handle_machine_stop(force=force):
+        with self._handle_machine_stop(force=pump_stop_mode):
             # stop the machine when emergency stop or sensor timeout happens
             # then bubble the exception up
             rtn()
