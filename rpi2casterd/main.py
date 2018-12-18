@@ -668,15 +668,10 @@ class Interface:
         error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
 
-        # save the current emergency stop state
-        prev_signals = self.signals
         while self.pump:
             # try as long as necessary, minimum two combinations to be sure
             self.send_signals(stop_code, timeout=timeout, force=True)
             self.send_signals(stop_code, timeout=timeout, force=True)
-
-        # restore the previous emergency stop state
-        self.status.update(signals=prev_signals)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
