@@ -552,9 +552,8 @@ class Interface:
         the machine will be stopped and the exception raised."""
         def check_estop():
             """if emergency stop is active, raise MachineStopped"""
-            if not suppress_stop:
-                if self.emergency_stop or GPIO.estop_button.value:
-                    raise librpi2caster.MachineStopped
+            if self.emergency_stop or GPIO.estop_button.value:
+                raise librpi2caster.MachineStopped
 
         try:
             check_estop()
@@ -658,15 +657,19 @@ class Interface:
         error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
 
-        # suppressing stop means that in case of emergency stop, or when
-        # stopping the machine, the routine will go on regardless of any
-        # emergency stop button presses, sensor timeouts
-        # or client emergency stop calls
-        # try as long as necessary
+        # save the current emergency stop state
+        old_emergency_stop = self.emergency_stop
         while self.pump:
+            # try as long as necessary
+            # temporarily reset the emergency stop state
+            self.emergency_stop_control(OFF)
+            # any MachineStopped exceptions normally raised in send_signals
+            # must be silenced, and machine stop must be prevented
             with self._handle_machine_stop(suppress_stop=True):
                 self.send_signals(stop_code, timeout=timeout)
                 self.send_signals(stop_code, timeout=timeout)
+        # restore the previous emergency stop state
+        self.emergency_stop_control(old_emergency_stop)
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
