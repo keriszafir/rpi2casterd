@@ -294,11 +294,6 @@ class InterfaceBase:
         """Get the emergency stop state"""
         return self.status.get('emergency_stop')
 
-    @emergency_stop.setter
-    def emergency_stop(self, state):
-        """Set the emergency stop state"""
-        self.status.update(emergency_stop=bool(state))
-
     @staticmethod
     def hardware_setup():
         """Nothing to do."""
@@ -315,7 +310,16 @@ class InterfaceBase:
         timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
         while GPIO.sensor.value != new_state:
             timed_out = time.time() - start_time > timeout
-            if GPIO.estop_button.value or self.emergency_stop or timed_out:
+            # we HAVE to poll the emergency stop button here,
+            # as the threaded callback is broken and does NOT always
+            # update the self.emergency_stop value properly
+            if GPIO.estop_button.value:
+                self.emergency_stop.control(ON)
+            # now check the emergency stop, as it could have been changed
+            # whether by the button, or by the client request
+            # also check for timeouts (machine stalling)
+            # if that happens, raise the MachineStopped exception
+            if self.emergency_stop or timed_out:
                 raise librpi2caster.MachineStopped
             # wait 5ms to ease the load on the CPU
             time.sleep(0.005)
@@ -490,7 +494,7 @@ class Interface(InterfaceBase):
         def update_emergency_stop():
             """Check and update the emergency stop status"""
             LOG.error('Emergency stop button pressed!')
-            self.emergency_stop = ON
+            self.emergency_stop_control(ON)
 
         # register callbacks
         GPIO.sensor.when_pressed = update_rpm_meter
@@ -545,7 +549,7 @@ class Interface(InterfaceBase):
         LOG.info('Starting the machine...')
         if self.is_working:
             message = 'Cannot do that - the machine is already working.'
-            LOG.error(message)
+            LOG.info(message)
             raise librpi2caster.InterfaceBusy(message)
         self.is_working = True
         GPIO.error_led.value, GPIO.working_led.value = ON, ON
@@ -555,7 +559,7 @@ class Interface(InterfaceBase):
         self.air_control(ON)
         if self.punch_mode or self.testing_mode:
             # automatically reset the emergency stop if it was engaged
-            self.emergency_stop = OFF
+            self.emergency_stop_control(OFF)
         else:
             # turn on the cooling water and motor, check the rotation
             # if MachineStopped is raised, it'll bubble up from here
@@ -579,9 +583,6 @@ class Interface(InterfaceBase):
             LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
             GPIO.error_led.value, GPIO.working_led.value = ON, ON
-            # store the emergency stop state;
-            # temporarily ooverride for pump stop
-            estop, self.emergency_stop = self.emergency_stop, OFF
             while self.pump:
                 # force turning the pump off
                 LOG.info('Stopping the pump...')
@@ -602,13 +603,17 @@ class Interface(InterfaceBase):
             self.is_working = False
             self.testing_mode = False
             LOG.info('Machine stopped.')
-            # reset the emergency stop state so it has to be cleared in client
-            self.emergency_stop = estop
+        else:
+            LOG.debug('The machine was already stopped. Skipping...')
 
     def pump_start(self):
         """Start the pump."""
         # get the current 0075 wedge position and preserve it
+        LOG.info('Pump start requested.')
+        if self.pump:
+            LOG.info('The pump was working, no need to start.')
         if not self.pump:
+            LOG.info('Starting the pump...')
             wedge_0075 = self.status['wedge_0075']
             self.send_signals('NKS0075{}'.format(wedge_0075))
 
@@ -617,8 +622,11 @@ class Interface(InterfaceBase):
         This function will send the pump stop combination (NJS 0005) twice
         to make sure that the pump is turned off.
         In case of failure, repeat."""
+        LOG.info('Pump stop requested.')
         if not self.pump:
+            LOG.info('The pump is already off, no need to stop it.')
             return
+        LOG.info('Stopping the pump - sending NJS 0005 twice...')
         # don't change the current 0005 wedge position
         wedge_0005 = self.status['wedge_0005']
         stop_code = 'NJS0005{}'.format(wedge_0005)
@@ -646,7 +654,9 @@ class Interface(InterfaceBase):
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
-        self.emergency_stop = state
+        msg = 'Emergency stop {}'.format('activated!' if state else 'cleared.')
+        LOG.warning(msg)
+        self.status.update(emergency_stop=state)
 
     def machine_control(self, state):
         """Machine and interface control.
@@ -655,8 +665,10 @@ class Interface(InterfaceBase):
         If state evaluates to False, stop (and try to stop the pump).
         """
         if state:
+            LOG.info('Requesting machine start.')
             self.start()
         else:
+            LOG.info('Requesting machine stop.')
             self.stop()
 
     def valves_control(self, state):
@@ -664,10 +676,13 @@ class Interface(InterfaceBase):
         Accepts signals (turn on), False (turn off) or None (get the status)"""
         if state:
             # got the signals
+            message = 'Valves on: {}'.format(' '.join(self.signals))
+            LOG.debug(message)
             self.output.valves_on(self.signals)
             self.update_pump_and_wedges()
             self.status.update(valves=ON)
         else:
+            LOG.debug('Turning all valves off.')
             self.output.valves_off()
             self.status.update(valves=OFF)
 
@@ -676,6 +691,8 @@ class Interface(InterfaceBase):
         no state or None = get the motor state,
         anything evaluating to True or False = turn on or off"""
         new_state = bool(state)
+        message = 'Turning the motor {}.'.format('ON' if new_state else 'OFF')
+        LOG.info(message)
         output = GPIO.motor_start if new_state else GPIO.motor_stop
         with suppress(AttributeError):
             output.on()
@@ -689,20 +706,27 @@ class Interface(InterfaceBase):
         """Air supply control: master compressed air solenoid valve.
         no state or None = get the air state,
         anything evaluating to True or False = turn on or off"""
+        message = ('Turning the compressed air supply {}'
+                   .format('ON' if state else 'OFF'))
+        LOG.info(message)
         with suppress(AttributeError):
-            GPIO.air.value = bool(state)
+            GPIO.air.value = state
 
     @staticmethod
     def water_control(state):
         """Cooling water control:
         no state or None = get the water valve state,
         anything evaluating to True or False = turn on or off"""
+        message = ('Turning the cooling water supply {}'
+                   .format('ON' if state else 'OFF'))
+        LOG.info(message)
         with suppress(AttributeError):
-            GPIO.water.value = bool(state)
+            GPIO.water.value = state
 
     def pump_control(self, state):
         """No state: get the pump status.
         Anything evaluating to True or False: start or stop the pump"""
+        # log messages are implemented in pump_start and pump_stop
         if state:
             self.pump_start()
         else:
