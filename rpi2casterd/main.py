@@ -18,15 +18,11 @@ import time
 import librpi2caster
 from flask import Flask, abort, jsonify
 from flask.globals import request
-import RPi.GPIO as GPIO
+from gpiozero import Button, LED, GPIOPinMissing, GPIOPinInUse
 
 LOG = logging.getLogger('rpi2casterd')
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
-ON, OFF = True, False
-# GPIO constants
-OUTPUT, INPUT, PULLDOWN, PULLUP = 0, 1, 21, 22
-RISING, FALLING, BOTH = 31, 32, 33
-
+IN, OUT = ON, OFF = True, False
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
                         *(str(x) for x in range(1, 15)), 'O15'])
 
@@ -51,10 +47,6 @@ DEFAULTS = dict(name='Monotype composition caster',
 CFG = configparser.ConfigParser(defaults=DEFAULTS)
 CFG.read(['/usr/lib/rpi2casterd/rpi2casterd.conf', '/etc/rpi2casterd.conf'])
 
-# Initialize the application
-GPIO.setmode(GPIO.BCM)
-LEDS = dict()
-
 
 def journald_setup():
     """Set up and start journald logging"""
@@ -65,69 +57,6 @@ def journald_setup():
         journal_handler.setFormatter(logging.Formatter(log_entry_format))
         LOG.setLevel(logging.DEBUG)
         LOG.addHandler(journal_handler)
-
-
-def setup_gpio(name, direction, pull=None, callbk=None,
-               edge=GPIO.FALLING, bouncetime=50):
-    """Set up a GPIO input/output"""
-    gpio_string = CFG.defaults().get(name).strip()
-    with suppress(TypeError, ValueError):
-        gpio = int(gpio_string)
-        if not gpio:
-            return None
-        # set up an input or output
-        if pull:
-            GPIO.setup(gpio, direction, pull_up_down=pull)
-        else:
-            GPIO.setup(gpio, direction)
-
-        # try registering a callback function on interrupt
-        if callbk:
-            try:
-                GPIO.add_event_detect(gpio, edge, callbk,
-                                      bouncetime=bouncetime)
-            except RuntimeError:
-                GPIO.add_event_callback(gpio, callbk)
-            except TypeError:
-                pass
-        return gpio
-
-
-def turn_on(gpio, raise_exception=False):
-    """Turn on a specified GPIO output"""
-    if gpio:
-        GPIO.output(gpio, ON)
-    elif raise_exception:
-        raise NotImplementedError
-
-
-def turn_off(gpio, raise_exception=False):
-    """Turn off a specified GPIO output"""
-    if gpio:
-        GPIO.output(gpio, OFF)
-    elif raise_exception:
-        raise NotImplementedError
-
-
-def get_state(gpio):
-    """Get the state of a GPIO input or output"""
-    return GPIO.input(gpio)
-
-
-def toggle(gpio):
-    """Change the state of a GPIO output"""
-    current_state = GPIO.input(gpio)
-    GPIO.output(gpio, not current_state)
-
-
-def ready_led_blink():
-    """Blinks the LED"""
-    led_gpio = LEDS.get('ready')
-    if not led_gpio:
-        return
-    for _ in range(6):
-        toggle(led_gpio)
-        time.sleep(0.3)
 
 
 def parse_signals(input_signals):
@@ -181,18 +110,25 @@ def parse_configuration(source):
         converts it to a desired data type"""
         return convert(source.get(parameter))
 
+    def address_and_port(input_string):
+        """Get an IP or DNS address and a port"""
+        try:
+            address, _port = input_string.split(':')
+            port = int(_port)
+        except ValueError:
+            address, port = input_string, 23017
+        return address, port
+
     config = OrderedDict()
 
     # get timings
     config['name'] = get('name', str)
+    config['address'], config['port'] = get('listen_address', address_and_port)
     config['startup_timeout'] = get('startup_timeout', float)
     config['sensor_timeout'] = get('sensor_timeout', float)
     config['pump_stop_timeout'] = get('pump_stop_timeout', float)
     config['punching_on_time'] = get('punching_on_time', float)
     config['punching_off_time'] = get('punching_off_time', float)
-
-    # time (in milliseconds) for software debouncing
-    config['debounce_milliseconds'] = get('debounce_milliseconds', int)
 
     # determine the output driver and settings
     config['output_driver'] = get('output_driver').lower()
@@ -207,39 +143,41 @@ def parse_configuration(source):
 
 def daemon_setup():
     """Configure the "ready" LED and shutdown/reboot buttons"""
-    def shutdown(*_):
+    def shutdown():
         """Shut the system down"""
         command = CFG.defaults().get('shutdown_command')
-        LOG.info('Shutdown button pressed. Hold down for 2s to turn off...')
-        time.sleep(2)
-        # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not get_state(shdn_button):
-            LOG.info('Shutting down...')
-            ready_led_blink()
-            subprocess.run([x.strip() for x in command.split(' ')])
+        LOG.info('Shutting down...')
+        with suppress(AttributeError):
+            GPIO.ready_led.blink(0.5, 0.5)
+        subprocess.run([x.strip() for x in command.split(' ')])
 
-    def reboot(*_):
+    def reboot():
         """Restart the system"""
         command = CFG.defaults().get('reboot_command')
-        LOG.info('Reboot button pressed. Hold down for 2s to reboot...')
-        time.sleep(2)
-        # the button is between GPIO and GND i.e. pulled up - negative logic
-        if not get_state(reset_button):
-            LOG.info('Rebooting...')
-            ready_led_blink()
-            subprocess.run([x.strip() for x in command.split(' ')])
+        LOG.info('Rebooting...')
+        with suppress(AttributeError):
+            GPIO.ready_led.blink(0.2, 0.2)
+        subprocess.run([x.strip() for x in command.split(' ')])
 
     def signal_handler(*_):
         """Exit gracefully if SIGINT or SIGTERM received"""
         raise KeyboardInterrupt
 
-    # set up the ready LED and shutdown/reboot buttons, if possible
-    LEDS['ready'] = setup_gpio('ready_led_gpio', OUTPUT)
-    shdn_button = setup_gpio('shutdown_gpio', INPUT, PULLUP, shutdown)
-    reset_button = setup_gpio('reboot_gpio', INPUT, PULLUP, reboot)
+    # set up the GPIOs for the interface
+    GPIO.reboot_button.when_held = reboot
+    GPIO.shutdown_button.when_held = shutdown
     # register callbacks for signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+
+def pin(name, direction, **kwargs):
+    """Set up an input or output pin"""
+    gpio_string = CFG.defaults().get('{}_gpio'.format(name)).strip()
+    with suppress(TypeError, ValueError, GPIOPinMissing, GPIOPinInUse):
+        gpio_number = int(gpio_string)
+        device = Button if direction == IN else LED
+        return device(gpio_number, **kwargs)
 
 
 def main():
@@ -247,18 +185,15 @@ def main():
     journald_setup()
     interface = None
     config = CFG.defaults()
-    listen_address = config.get('listen_address')
     try:
         # initialize hardware
         daemon_setup()
         # interface configuration
         settings = parse_configuration(config)
         interface = Interface(settings)
-        # all configured - it's ready to work
-        ready_led_gpio = LEDS.get('ready')
-        turn_on(ready_led_gpio)
+        GPIO.ready_led.on()
         # start the web API for communicating with client
-        interface.webapi(listen_address)
+        interface.webapi()
 
     except KeyError as exception:
         raise librpi2caster.ConfigurationError(exception)
@@ -277,9 +212,6 @@ def main():
         # make sure the GPIOs are de-configured properly
         with suppress(AttributeError):
             interface.stop()
-        for led_gpio in LEDS.values():
-            turn_off(led_gpio)
-        LEDS.clear()
         GPIO.cleanup()
 
 
@@ -290,14 +222,10 @@ class InterfaceBase:
         self.output = None
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
-        # temporary GPIO dict (can be populated in hardware_setup)
-        self.gpios = dict(working_led=None, error_led=None)
         # initialize machine state
         self.status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
-                           machine=OFF, water=OFF, air=OFF, motor=OFF,
-                           pump=OFF, sensor=OFF, signals=[],
-                           emergency_stop=OFF, testing_mode=OFF,
-                           working_led=OFF, error_led=OFF)
+                           machine=OFF, motor=OFF, sensor=OFF, signals=[],
+                           testing_mode=OFF)
         self.hardware_setup()
 
     def __str__(self):
@@ -395,9 +323,9 @@ class InterfaceBase:
         LOG.debug(message)
         start_time = time.time()
         timeout = timeout if timeout else self.config.get('sensor_timeout', 5)
-        while self.sensor_state != new_state:
+        while GPIO.sensor.value != new_state:
             timed_out = time.time() - start_time > timeout
-            if self.emergency_stop or timed_out:
+            if GPIO.emergency_stop.value or self.emergency_stop or timed_out:
                 raise librpi2caster.MachineStopped
             # wait 5ms to ease the load on the CPU
             time.sleep(0.005)
@@ -459,17 +387,8 @@ class InterfaceBase:
 
 class Interface(InterfaceBase):
     """Hardware control interface"""
-    def webapi(self, listen_address):
+    def webapi(self):
         """JSON web API for communicating with the casting software."""
-        def get_address_and_port():
-            """Get an IP or DNS address and a port"""
-            try:
-                address, _port = listen_address.split(':')
-                port = int(_port)
-            except ValueError:
-                address, port = listen_address, 23017
-            return address, port
-
         def handle_request(routine):
             """Boilerplate code for the flask API functions,
             used for handling requests to interfaces."""
@@ -503,7 +422,8 @@ class Interface(InterfaceBase):
                 request_data = request.get_json() or {}
                 self.status.update(**request_data)
             status = self.status
-            status.update(speed='{}rpm'.format(self.rpm()))
+            status.update(speed='{}rpm'.format(self.rpm()),
+                          **GPIO.get_values())
             return status
 
         @handle_request
@@ -553,7 +473,7 @@ class Interface(InterfaceBase):
                 raise NotImplementedError
             # we're sure that we have a method
             if request.method == POST and device_state is not None:
-                routine(device_state)
+                routine(bool(device_state))
             elif request.method == PUT:
                 routine(ON)
             elif request.method == DELETE:
@@ -562,58 +482,36 @@ class Interface(InterfaceBase):
             return dict(active=self.status.get(device))
 
         app = Flask('rpi2casterd')
-        all_methods = ('GET', 'PUT', 'POST', 'DELETE')
-        app.route('/', methods=all_methods)(index)
-        app.route('/config', methods=all_methods)(config)
-        app.route('/signals', methods=all_methods)(signals)
-        app.route('/<device>', methods=all_methods)(control)
-
-        address, port = get_address_and_port()
-        app.run(address, port)
+        app.route('/', methods=ALL_METHODS)(index)
+        app.route('/config', methods=ALL_METHODS)(config)
+        app.route('/signals', methods=ALL_METHODS)(signals)
+        app.route('/<device>', methods=ALL_METHODS)(control)
+        app.run(self.config.get('address'), self.config.get('port'))
 
     def hardware_setup(self):
         """Configure the inputs and outputs.
         Raise ConfigurationError if output name is not recognized,
         or modules supporting the hardware backends cannot be imported."""
-        def update_sensor(sensor_gpio):
+        def update_rpm_meter():
             """Update the RPM event counter"""
-            self.sensor_state = get_state(sensor_gpio)
-            message = ('Photocell sensor goes {}'
-                       .format('ON' if self.sensor_state else 'OFF'))
-            LOG.debug(message)
-            if self.sensor_state:
-                self.meter_events.append(time.time())
+            LOG.debug('Photocell sensor activated')
+            self.meter_events.append(time.time())
 
-        def update_emergency_stop(emergency_stop_gpio):
+        def update_emergency_stop():
             """Check and update the emergency stop status"""
-            state = get_state(emergency_stop_gpio)
-            if state:
-                LOG.error('Emergency stop button pressed!')
-                self.emergency_stop = ON
+            LOG.error('Emergency stop button pressed!')
+            self.emergency_stop = ON
 
-        bouncetime = self.config.get('debounce_milliseconds', 5)
-        gpios = dict(sensor=setup_gpio('sensor_gpio', INPUT, edge=BOTH,
-                                       callbk=update_sensor,
-                                       bouncetime=bouncetime),
-                     emergency_stop=setup_gpio('emergency_stop_gpio',
-                                               INPUT, edge=BOTH,
-                                               callbk=update_emergency_stop,
-                                               bouncetime=bouncetime),
-                     mode_detect=setup_gpio('mode_detect_gpio',
-                                            INPUT, PULLUP),
-                     error_led=setup_gpio('error_led_gpio', OUTPUT),
-                     working_led=setup_gpio('working_led_gpio', OUTPUT),
-                     air=setup_gpio('air_gpio', OUTPUT),
-                     water=setup_gpio('water_gpio', OUTPUT),
-                     motor_stop=setup_gpio('motor_stop_gpio', OUTPUT),
-                     motor_start=setup_gpio('motor_start_gpio', OUTPUT))
+        # register callbacks
+        GPIO.sensor.when_pressed = update_rpm_meter
+        GPIO.emergency_stop.when_pressed = update_emergency_stop
 
         # does the interface offer the motor start/stop capability?
-        motor_feature = gpios.get('motor_start') and gpios.get('motor_stop')
+        motor_feature = GPIO.motor_start and GPIO.motor_stop
         self.config['has_motor_control'] = bool(motor_feature)
 
         # use a GPIO pin for sensing punch/cast mode
-        self.config['punch_mode'] = bool(get_state(gpios.get('mode_detect')))
+        self.config['punch_mode'] = bool(GPIO.mode_detect.value)
 
         # output setup:
         try:
@@ -631,9 +529,6 @@ class Interface(InterfaceBase):
         except ImportError:
             raise librpi2caster.ConfigurationError('{}: module not installed'
                                                    .format(output_name))
-        self.gpios = gpios
-        LEDS.update(error=gpios.get('error_led'),
-                    working=gpios.get('working_led'))
 
     @contextmanager
     def handle_machine_stop(self, suppress_stop=False):
@@ -641,8 +536,9 @@ class Interface(InterfaceBase):
         the machine will be stopped and the exception raised."""
         def check_estop():
             """if emergency stop is active, raise MachineStopped"""
-            if self.emergency_stop and not suppress_stop:
-                raise librpi2caster.MachineStopped
+            if not suppress_stop:
+                if self.emergency_stop or GPIO.emergency_stop.value:
+                    raise librpi2caster.MachineStopped
 
         try:
             check_estop()
@@ -662,8 +558,7 @@ class Interface(InterfaceBase):
             LOG.error(message)
             raise librpi2caster.InterfaceBusy(message)
         self.is_working = True
-        self.working_led = ON
-        self.error_led = ON
+        GPIO.error_led.value, GPIO.working_led.value = ON, ON
         # reset the RPM counter
         self.meter_events.clear()
         # turn on the compressed air
@@ -684,7 +579,7 @@ class Interface(InterfaceBase):
                     self.wait_for_sensor(OFF, timeout=timeout)
         LOG.info('Machine started.')
         # properly initialized => mark it as working
-        self.error_led = OFF
+        GPIO.error_led.value = OFF
 
     def stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
@@ -693,8 +588,7 @@ class Interface(InterfaceBase):
             LOG.debug('The machine was working.')
             LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
-            self.working_led = ON
-            self.error_led = ON
+            GPIO.error_led.value, GPIO.working_led.value = ON, ON
             # store the emergency stop state;
             # temporarily ooverride for pump stop
             estop, self.emergency_stop = self.emergency_stop, OFF
@@ -713,8 +607,7 @@ class Interface(InterfaceBase):
             # turn off the machine air supply
             self.air_control(OFF)
             # turn off the red/green/orange LED
-            self.error_led = OFF
-            self.working_led = OFF
+            GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
             # release the interface so others can claim it
             self.is_working = False
             self.testing_mode = False
@@ -744,8 +637,8 @@ class Interface(InterfaceBase):
         timeout = self.config.get('pump_stop_timeout')
 
         # store previous LED states; light the red error LED only
-        self.error_led, error_led = ON, self.error_led
-        self.working_led, working_led = OFF, self.working_led
+        error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
+        GPIO.error_led.value, GPIO.working_led.value = ON, OFF
 
         # suppressing stop means that in case of emergency stop, or when
         # stopping the machine, the routine will go on regardless of any
@@ -759,35 +652,7 @@ class Interface(InterfaceBase):
                     self.send_signals(stop_code, timeout=timeout)
 
         # finished; reset LEDs
-        self.error_led, self.working_led = error_led, working_led
-
-    @property
-    def error_led(self):
-        """Get the current error LED state"""
-        return self.status.get('error_led')
-
-    @error_led.setter
-    def error_led(self, state):
-        """Turn the error LED on or off"""
-        if state:
-            turn_on(self.gpios.get('error_led'))
-        else:
-            turn_off(self.gpios.get('error_led'))
-        self.status.update(error_led=bool(state))
-
-    @property
-    def working_led(self):
-        """Get the current working LED state"""
-        return self.status.get('working_led')
-
-    @working_led.setter
-    def working_led(self, state):
-        """Turn the error LED on or off"""
-        if state:
-            turn_on(self.gpios.get('working_led'))
-        else:
-            turn_off(self.gpios.get('working_led'))
-        self.status.update(working_led=bool(state))
+        GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
@@ -818,47 +683,34 @@ class Interface(InterfaceBase):
 
     def motor_control(self, state):
         """Motor control:
-            no state or None = get the motor state,
-            anything evaluating to True or False = turn on or off"""
-        if state:
-            start_gpio = self.gpios.get('motor_start')
-            if start_gpio:
-                turn_on(start_gpio)
-                time.sleep(0.2)
-                turn_off(start_gpio)
-            self.status.update(motor=ON)
-        else:
-            stop_gpio = self.gpios.get('motor_stop')
-            if stop_gpio:
-                turn_on(stop_gpio)
-                time.sleep(0.2)
-                turn_off(stop_gpio)
-            self.status.update(motor=OFF)
-            self.meter_events.clear()
+        no state or None = get the motor state,
+        anything evaluating to True or False = turn on or off"""
+        new_state = bool(state)
+        output = GPIO.motor_start if new_state else GPIO.motor_stop
+        with suppress(AttributeError):
+            output.on()
+            time.sleep(0.2)
+            output.off()
+        self.status.update(motor=new_state)
+        self.meter_events.clear()
 
-    def air_control(self, state):
+    @staticmethod
+    def air_control(state):
         """Air supply control: master compressed air solenoid valve.
-            no state or None = get the air state,
-            anything evaluating to True or False = turn on or off"""
-        air_gpio = self.gpios.get('air')
-        if state:
-            turn_on(air_gpio)
-            self.status.update(air=ON)
-        else:
-            turn_off(air_gpio)
-            self.status.update(air=OFF)
+        no state or None = get the air state,
+        anything evaluating to True or False = turn on or off"""
+        new_state = bool(state)
+        with suppress(AttributeError):
+            GPIO.air.value = new_state
 
-    def water_control(self, state):
+    @staticmethod
+    def water_control(state):
         """Cooling water control:
-            no state or None = get the water valve state,
-            anything evaluating to True or False = turn on or off"""
-        water_gpio = self.gpios.get('water')
-        if state:
-            turn_on(water_gpio)
-            self.status.update(water=ON)
-        else:
-            turn_off(water_gpio)
-            self.status.update(water=OFF)
+        no state or None = get the water valve state,
+        anything evaluating to True or False = turn on or off"""
+        new_state = bool(state)
+        with suppress(AttributeError):
+            GPIO.air.value = new_state
 
     def pump_control(self, state):
         """No state: get the pump status.
@@ -919,6 +771,61 @@ class Interface(InterfaceBase):
             # stop the machine when emergency stop or sensor timeout happens
             # then bubble the exception up
             rtn()
+
+
+class GPIOCollection:
+    """Input/output group with iteration and getting attributes by name"""
+    ready_led, error_led, working_led = None, None, None
+    motor_start, motor_stop, air, water = None, None, None, None
+    sensor, emergency_stop, mode_detect = None, None, None
+    shutdown_button, reboot_button = None, None
+
+    def __init__(self):
+        bouncetime = CFG.defaults().get('debounce_milliseconds') / 1000.0
+        ins = dict(shutdown_button=pin('shutdown', IN, hold_time=2),
+                   reboot_button=pin('reboot', IN, hold_time=2),
+                   sensor=pin('sensor', IN, bounce_time=bouncetime),
+                   emergency_stop=pin('emergency_stop', IN, bounce_time=0.1),
+                   mode_detect=pin('mode_detect', IN))
+        outs = dict(working_led=pin('working_led', OUT),
+                    error_led=pin('error_led', OUT),
+                    ready_led=pin('ready_led', OUT),
+                    air=pin('air', OUT), water=pin('water', OUT),
+                    motor_start=pin('motor_start', OUT),
+                    motor_stop=pin('motor_stop', OUT))
+        self.inputs = ins
+        self.outputs = outs
+        self.__dict__.update(**ins, **outs)
+
+    def get_values(self):
+        """Get the current state of all GPIOs"""
+        state = dict()
+        state.update({name: gpio.value for name, gpio in self.inputs.items()})
+        state.update({name: gpio.value for name, gpio in self.outputs.items()})
+        return state
+
+    def all_off(self):
+        """Turn all outputs off"""
+        for gpio in self.outputs.values():
+            with suppress(AttributeError):
+                gpio.off()
+
+    def cleanup(self):
+        """Clean up all GPIOs"""
+        self.all_off()
+        for name, gpio in self.outputs.items():
+            with suppress(AttributeError):
+                gpio.close()
+            self.__dict__.popitem(name, gpio)
+        for name, gpio in self.inputs.items():
+            with suppress(AttributeError):
+                gpio.close()
+            self.__dict__.popitem(name, gpio)
+        self.inputs.clear()
+        self.outputs.clear()
+
+
+GPIO = GPIOCollection()
 
 
 if __name__ == '__main__':
