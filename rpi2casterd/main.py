@@ -777,9 +777,9 @@ class Interface:
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self._wait_for_sensor(ON, timeout=wait, force=force)
+            self._wait_for_sensor(ON, timeout=wait, ignore_stop=force)
             self.valves_control(ON)
-            self._wait_for_sensor(OFF, timeout=wait, force=force)
+            self._wait_for_sensor(OFF, timeout=wait, ignore_stop=force)
             self.valves_control(OFF)
             self._update_pump_and_wedges()
 
