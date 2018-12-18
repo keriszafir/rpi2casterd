@@ -781,7 +781,7 @@ class GPIOCollection:
     shutdown_button, reboot_button = None, None
 
     def __init__(self):
-        bouncetime = CFG.defaults().get('debounce_milliseconds') / 1000.0
+        bouncetime = float(CFG.defaults().get('debounce_milliseconds')) / 1000
         ins = dict(shutdown_button=pin('shutdown', IN, hold_time=2),
                    reboot_button=pin('reboot', IN, hold_time=2),
                    sensor=pin('sensor', IN, bounce_time=bouncetime),
