@@ -667,7 +667,8 @@ class Interface:
         # save the current emergency stop state
         prev_signals = self.signals
         while self.pump:
-            # try as long as necessary
+            # try as long as necessary, minimum two combinations to be sure
+            self.send_signals(stop_code, timeout=timeout, force=True)
             self.send_signals(stop_code, timeout=timeout, force=True)
 
         # restore the previous emergency stop state
