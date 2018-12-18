@@ -511,7 +511,7 @@ class Interface(InterfaceBase):
         self.config['has_motor_control'] = bool(motor_feature)
 
         # use a GPIO pin for sensing punch/cast mode
-        self.config['punch_mode'] = bool(GPIO.mode_detect.value)
+        self.config['punch_mode'] = not bool(GPIO.mode_detect.value)
 
         # output setup:
         try:
@@ -782,10 +782,13 @@ class GPIOCollection:
 
     def __init__(self):
         bouncetime = float(CFG.defaults().get('debounce_milliseconds')) / 1000
-        ins = dict(shutdown_button=pin('shutdown', IN, hold_time=2),
-                   reboot_button=pin('reboot', IN, hold_time=2),
-                   sensor=pin('sensor', IN, bounce_time=bouncetime),
-                   emergency_stop=pin('emergency_stop', IN, bounce_time=0.1),
+        ins = dict(shutdown_button=pin('shutdown', IN, pull_up=False,
+                                       hold_time=2),
+                   reboot_button=pin('reboot', IN, pull_up=False, hold_time=2),
+                   sensor=pin('sensor', IN, pull_up=False,
+                              bounce_time=bouncetime),
+                   emergency_stop=pin('emergency_stop', IN, pull_up=False,
+                                      bounce_time=0.1),
                    mode_detect=pin('mode_detect', IN))
         outs = dict(working_led=pin('working_led', OUT),
                     error_led=pin('error_led', OUT),
@@ -816,11 +819,11 @@ class GPIOCollection:
         for name, gpio in self.outputs.items():
             with suppress(AttributeError):
                 gpio.close()
-            self.__dict__.popitem(name, gpio)
+            self.__dict__.pop(name)
         for name, gpio in self.inputs.items():
             with suppress(AttributeError):
                 gpio.close()
-            self.__dict__.popitem(name, gpio)
+            self.__dict__.pop(name)
         self.inputs.clear()
         self.outputs.clear()
 
