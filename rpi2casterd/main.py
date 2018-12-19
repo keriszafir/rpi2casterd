@@ -559,6 +559,8 @@ class Interface:
             LOG.debug('Checking if the machine is working...')
             if self.is_working:
                 LOG.info('Stopping the machine...')
+                # release the interface so others can claim it
+                self.status.update(working=False, testing_mode=False)
                 # orange LED for stopping sequence
                 GPIO.error_led.value, GPIO.working_led.value = ON, ON
                 # turn all off
@@ -570,8 +572,6 @@ class Interface:
                     self.water_control(OFF)
                 # turn off the machine air supply
                 self.air_control(OFF)
-                # release the interface so others can claim it
-                self.status.update(working=False, testing_mode=False)
                 LOG.info('Machine stopped.')
         except librpi2caster.MachineStopped:
             # if emergency stop happens, repeat recursively
