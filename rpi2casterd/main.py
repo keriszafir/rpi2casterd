@@ -554,33 +554,32 @@ class Interface:
 
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
-        LOG.debug('Stopping the pump...')
-        self._pump_stop()
         LOG.debug('Checking if the machine is working...')
-        if not self.is_working:
+        if self.is_working:
+            self._pump_stop()
+            try:
+                LOG.info('Stopping the machine...')
+                # orange LED for stopping sequence
+                GPIO.error_led.value, GPIO.working_led.value = ON, ON
+                # turn all off
+                self.valves_control(OFF)
+                self.signals = []
+                if not self.punch_mode and not self.testing_mode:
+                    # turn off the motor and cooling water
+                    self.motor_control(OFF)
+                    self.water_control(OFF)
+                # turn off the machine air supply
+                self.air_control(OFF)
+                # release the interface so others can claim it
+                self.status.update(working=False, testing_mode=False)
+                LOG.info('Machine stopped.')
+            except librpi2caster.MachineStopped:
+                # if emergency stop happens, repeat recursively
+                self._stop()
+        else:
             LOG.debug('The machine was already stopped. Skipping...')
-            return
-        try:
-            LOG.info('Stopping the machine...')
-            # orange LED for stopping sequence
-            GPIO.error_led.value, GPIO.working_led.value = ON, ON
-            # turn all off
-            self.valves_control(OFF)
-            self.signals = []
-            if not self.punch_mode and not self.testing_mode:
-                # turn off the motor and cooling water
-                self.motor_control(OFF)
-                self.water_control(OFF)
-            # turn off the machine air supply
-            self.air_control(OFF)
-            # turn off the red/green/orange LED
-            GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
-            # release the interface so others can claim it
-            self.status.update(working=False, testing_mode=False)
-            LOG.info('Machine stopped.')
-        except librpi2caster.MachineStopped:
-            # if emergency stop happens, repeat recursively
-            self._stop()
+        # always turn off the red/green/orange LED
+        GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
 
     def _pump_start(self):
         """Start the pump."""
@@ -598,14 +597,10 @@ class Interface:
         This function will send the pump stop combination (NJS 0005) twice
         to make sure that the pump is turned off.
         In case of failure, repeat."""
-        LOG.info('Pump stop requested.')
-        if self.testing_mode:
-            LOG.info('No need to turn off the pump in testing mode.')
+        if self.testing_mode or not self.pump or not self.is_working:
             return
-        if not self.pump:
-            LOG.info('The pump is already off, no need to stop it.')
-            return
-        LOG.info('Stopping the pump - sending NJS 0005 twice...')
+
+        LOG.info('Stopping the pump...')
         # don't change the current 0005 wedge position
         wedge_0005 = self.status['wedge_0005']
         stop_code = 'NJS0005{}'.format(wedge_0005)
@@ -621,11 +616,11 @@ class Interface:
         try:
             while self.pump:
                 # try as long as necessary, minimum two combinations to be sure
-                self.send_signals(stop_code, timeout=120, check_working=False)
+                self.send_signals(stop_code, timeout=120)
                 # prevent 2nd combination from being ommitted
                 # if stop happens in the meantime
                 self.status.update(pump=ON)
-                self.send_signals(stop_code, timeout=120, check_working=False)
+                self.send_signals(stop_code, timeout=120)
         except librpi2caster.MachineStopped:
             # repeat recursively if emergency stop happens
             self._pump_stop()
@@ -635,6 +630,7 @@ class Interface:
         self.status.update(emergency_stop=self.emergency_stop or estop_state)
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
+        LOG.info('Pump successfully stopped.')
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
@@ -715,7 +711,7 @@ class Interface:
         else:
             self._pump_stop()
 
-    def send_signals(self, signals, timeout=None, check_working=True):
+    def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -732,7 +728,7 @@ class Interface:
             wait for sensor to go OFF, turn off the valves.
             """
             # the interface must be started beforehand if we want to cast
-            if check_working and not self.is_working:
+            if not self.is_working:
                 raise librpi2caster.InterfaceNotStarted
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
