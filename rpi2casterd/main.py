@@ -557,6 +557,7 @@ class Interface:
         LOG.debug('Checking if the machine is working...')
         if not self.is_working:
             LOG.debug('The machine was already stopped. Skipping...')
+            return
         try:
             LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
