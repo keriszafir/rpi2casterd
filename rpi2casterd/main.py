@@ -554,6 +554,8 @@ class Interface:
 
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
+        LOG.debug('Stopping the pump...')
+        self._pump_stop()
         LOG.debug('Checking if the machine is working...')
         if not self.is_working:
             LOG.debug('The machine was already stopped. Skipping...')
@@ -565,8 +567,6 @@ class Interface:
             # turn all off
             self.valves_control(OFF)
             self.signals = []
-            # force turning the pump off
-            self._pump_stop()
             if not self.punch_mode and not self.testing_mode:
                 # turn off the motor and cooling water
                 self.motor_control(OFF)
@@ -605,9 +605,6 @@ class Interface:
         if not self.pump:
             LOG.info('The pump is already off, no need to stop it.')
             return
-        if not self.is_working:
-            LOG.info('The machine is not working. Not stopping the pump...')
-            return
         LOG.info('Stopping the pump - sending NJS 0005 twice...')
         # don't change the current 0005 wedge position
         wedge_0005 = self.status['wedge_0005']
@@ -624,11 +621,11 @@ class Interface:
         try:
             while self.pump:
                 # try as long as necessary, minimum two combinations to be sure
-                self.send_signals(stop_code, timeout=120)
+                self.send_signals(stop_code, timeout=120, check_working=False)
                 # prevent 2nd combination from being ommitted
                 # if stop happens in the meantime
                 self.status.update(pump=ON)
-                self.send_signals(stop_code, timeout=120)
+                self.send_signals(stop_code, timeout=120, check_working=False)
         except librpi2caster.MachineStopped:
             # repeat recursively if emergency stop happens
             self._pump_stop()
@@ -718,7 +715,7 @@ class Interface:
         else:
             self._pump_stop()
 
-    def send_signals(self, signals, timeout=None):
+    def send_signals(self, signals, timeout=None, check_working=True):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -735,7 +732,7 @@ class Interface:
             wait for sensor to go OFF, turn off the valves.
             """
             # the interface must be started beforehand if we want to cast
-            if not self.is_working:
+            if check_working and not self.is_working:
                 raise librpi2caster.InterfaceNotStarted
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
