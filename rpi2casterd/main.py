@@ -627,6 +627,7 @@ class Interface:
             # try as long as necessary, minimum two combinations to be sure
             stop_sequence()
             stop_sequence()
+            stop_sequence()
             self._update_pump_and_wedges()
 
         # finished; reset LEDs
