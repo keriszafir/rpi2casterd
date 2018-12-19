@@ -554,10 +554,10 @@ class Interface:
 
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
-        LOG.debug('Checking if the machine is working...')
-        if self.is_working:
-            self._pump_stop()
-            try:
+        self._pump_stop()
+        try:
+            LOG.debug('Checking if the machine is working...')
+            if self.is_working:
                 LOG.info('Stopping the machine...')
                 # orange LED for stopping sequence
                 GPIO.error_led.value, GPIO.working_led.value = ON, ON
@@ -573,11 +573,9 @@ class Interface:
                 # release the interface so others can claim it
                 self.status.update(working=False, testing_mode=False)
                 LOG.info('Machine stopped.')
-            except librpi2caster.MachineStopped:
-                # if emergency stop happens, repeat recursively
-                self._stop()
-        else:
-            LOG.debug('The machine was already stopped. Skipping...')
+        except librpi2caster.MachineStopped:
+            # if emergency stop happens, repeat recursively
+            self._stop()
         # always turn off the red/green/orange LED
         GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
 
