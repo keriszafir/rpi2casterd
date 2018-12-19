@@ -422,7 +422,7 @@ class Interface:
         app.route('/<device>', methods=ALL_METHODS)(control)
         app.run(self.config.get('address'), self.config.get('port'))
 
-    def _wait_for_sensor(self, new_state, timeout=0, force=False):
+    def _wait_for_sensor(self, new_state, timeout=0):
         """Wait until the machine cycle sensor changes its state
         to the desired value (True or False).
         If no state change is registered in the given time,
@@ -439,7 +439,7 @@ class Interface:
             # update the self.emergency_stop value properly
             if GPIO.estop_button.value:
                 self.emergency_stop_control(ON)
-            if self.emergency_stop and not force:
+            if self.emergency_stop:
                 raise librpi2caster.MachineStopped
             # check for timeouts (machine stalling)
             # if that happens, raise the MachineStopped exception
@@ -504,7 +504,7 @@ class Interface:
                            wedge_0075=pos_0075, wedge_0005=pos_0005)
 
     @contextmanager
-    def _handle_machine_stop(self, force=False):
+    def _handle_machine_stop(self):
         """Make sure that when MachineStopped occurs inside the contextmanager,
         the machine will be stopped and the exception raised."""
         def check_estop():
@@ -512,20 +512,13 @@ class Interface:
             if self.emergency_stop or GPIO.estop_button.value:
                 raise librpi2caster.MachineStopped
 
-        if force:
-            with suppress(librpi2caster.MachineStopped):
-                yield
-
-        else:
-            # normal operation - machine stalling or emergency stop
-            # will stop the machine and propagate the exception
-            try:
-                check_estop()
-                yield
-                check_estop()
-            except librpi2caster.MachineStopped:
-                self._stop()
-                raise
+        try:
+            check_estop()
+            yield
+            check_estop()
+        except librpi2caster.MachineStopped:
+            self._stop()
+            raise
 
     def _start(self):
         """Starts the machine. When casting, check if it's running."""
@@ -562,8 +555,9 @@ class Interface:
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
         LOG.debug('Checking if the machine is working...')
-        if self.is_working:
-            LOG.debug('The machine was working.')
+        if not self.is_working:
+            LOG.debug('The machine was already stopped. Skipping...')
+        try:
             LOG.info('Stopping the machine...')
             # orange LED for stopping sequence
             GPIO.error_led.value, GPIO.working_led.value = ON, ON
@@ -583,10 +577,9 @@ class Interface:
             # release the interface so others can claim it
             self.status.update(working=False, testing_mode=False)
             LOG.info('Machine stopped.')
-        elif self.pump:
-            self._pump_stop()
-        else:
-            LOG.debug('The machine was already stopped. Skipping...')
+        except librpi2caster.MachineStopped:
+            # if emergency stop happens, repeat recursively
+            self._stop()
 
     def _pump_start(self):
         """Start the pump."""
@@ -611,6 +604,9 @@ class Interface:
         if not self.pump:
             LOG.info('The pump is already off, no need to stop it.')
             return
+        if not self.is_working:
+            LOG.info('The machine is not working. Not stopping the pump...')
+            return
         LOG.info('Stopping the pump - sending NJS 0005 twice...')
         # don't change the current 0005 wedge position
         wedge_0005 = self.status['wedge_0005']
@@ -619,13 +615,26 @@ class Interface:
         # store previous LED states; light the red error LED only
         error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
+        # store the emergency stop state so that MachineStopped
+        # won't be fired right away
+        estop_state = self.emergency_stop
+        self.status.update(emergency_stop=OFF)
+        # try to turn off the pump
+        try:
+            while self.pump:
+                # try as long as necessary, minimum two combinations to be sure
+                self.send_signals(stop_code, timeout=120)
+                # prevent 2nd combination from being ommitted
+                # if stop happens in the meantime
+                self.status.update(pump=ON)
+                self.send_signals(stop_code, timeout=120)
+        except librpi2caster.MachineStopped:
+            # repeat recursively if emergency stop happens
+            self._pump_stop()
 
-        while self.pump:
-            # try as long as necessary, minimum two combinations to be sure
-            self.send_signals(stop_code, timeout=120, pump_stop_mode=True)
-            self.send_signals(stop_code, timeout=120, pump_stop_mode=True)
-            self._update_pump_and_wedges()
-
+        # restore the previous estop state
+        # make sure that it will stay on if it was tripped
+        self.status.update(emergency_stop=self.emergency_stop or estop_state)
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
 
@@ -708,7 +717,7 @@ class Interface:
         else:
             self._pump_stop()
 
-    def send_signals(self, signals, timeout=None, pump_stop_mode=False):
+    def send_signals(self, signals, timeout=None):
         """Send the signals to the caster/perforator.
         This method performs a single-dispatch on current operation mode:
             casting: sensor ON, valves ON, sensor OFF, valves OFF;
@@ -725,17 +734,16 @@ class Interface:
             wait for sensor to go OFF, turn off the valves.
             """
             # the interface must be started beforehand if we want to cast
-            if not pump_stop_mode and not self.is_working:
+            if not self.is_working:
                 raise librpi2caster.InterfaceNotStarted
             # allow the use of a custom timeout
             wait = timeout or self.config['sensor_timeout']
             # machine control cycle
-            self._wait_for_sensor(ON, timeout=wait, force=pump_stop_mode)
+            self._wait_for_sensor(ON, timeout=wait)
             self.valves_control(ON)
-            self._wait_for_sensor(OFF, timeout=wait, force=pump_stop_mode)
+            self._wait_for_sensor(OFF, timeout=wait)
             self.valves_control(OFF)
-            if not pump_stop_mode:
-                self._update_pump_and_wedges()
+            self._update_pump_and_wedges()
 
         def test():
             """Turn off any previous combination, then send signals."""
@@ -758,7 +766,7 @@ class Interface:
 
         self.signals = signals
         rtn = test if self.testing_mode else punch if self.punch_mode else cast
-        with self._handle_machine_stop(force=pump_stop_mode):
+        with self._handle_machine_stop():
             # stop the machine when emergency stop or sensor timeout happens
             # then bubble the exception up
             rtn()
