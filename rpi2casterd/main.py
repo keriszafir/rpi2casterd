@@ -561,8 +561,6 @@ class Interface:
                 LOG.info('Stopping the machine...')
                 # release the interface so others can claim it
                 self.status.update(working=False, testing_mode=False)
-                # orange LED for stopping sequence
-                GPIO.error_led.value, GPIO.working_led.value = ON, ON
                 # turn all off
                 self.valves_control(OFF)
                 self.signals = []
