@@ -176,7 +176,7 @@ class Interface:
         self.meter_events = deque(maxlen=3)
         # initialize machine state
         self.status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
-                           working=False, motor=OFF, signals=[],
+                           is_working=False, motor=OFF, signals=[],
                            testing_mode=False, emergency_stop=False,
                            is_stopping=False, is_starting=False)
         self.configure()
@@ -186,9 +186,19 @@ class Interface:
         return self.config.get('name', 'Monotype composition caster')
 
     @property
+    def is_starting(self):
+        """Get the machine starting status"""
+        return self.status.get('is_starting')
+
+    @property
     def is_working(self):
         """Get the machine working status"""
-        return self.status.get('working')
+        return self.status.get('is_working')
+
+    @property
+    def is_stopping(self):
+        """Get the machine stopping status"""
+        return self.status.get('is_stopping')
 
     @property
     def punch_mode(self):
@@ -529,7 +539,7 @@ class Interface:
             message = 'Cannot do that - the machine is already working.'
             LOG.info(message)
             raise librpi2caster.InterfaceBusy(message)
-        self.status.update(working=True, is_starting=True)
+        self.status.update(is_working=True, is_starting=True)
         GPIO.error_led.value, GPIO.working_led.value = ON, ON
         # reset the RPM counter
         self.meter_events.clear()
@@ -556,7 +566,7 @@ class Interface:
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
         try:
-            if self.status.get('is_stopping'):
+            if self.is_stopping:
                 LOG.info('The machine is already stopping...')
                 return
             # mark the interface as stopping so that any new calls
@@ -578,7 +588,7 @@ class Interface:
                 LOG.info('Machine stopped.')
             # stop was successful or not necessary at all
             # release the interface so others can claim it
-            self.status.update(working=False, is_stopping=False,
+            self.status.update(is_working=False, is_stopping=False,
                                testing_mode=False)
         except librpi2caster.MachineStopped:
             # if emergency stop happens, repeat recursively
