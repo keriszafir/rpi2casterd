@@ -659,7 +659,7 @@ class Interface:
         while self.pump_working:
             LOG.info('Stopping the pump...')
             # store previous LED states; light the red error LED only
-            error_led, = GPIO.error_led.value
+            error_led = GPIO.error_led.value
             working_led = GPIO.working_led.value
             GPIO.error_led.value, GPIO.working_led.value = ON, OFF
             # try to turn off the pump
