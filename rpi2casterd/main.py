@@ -234,9 +234,14 @@ class Interface:
         self.status.update(signals=signals)
 
     @property
-    def pump(self):
+    def pump_working(self):
         """Get the pump state"""
         return self.status.get('pump')
+
+    @property
+    def motor_working(self):
+        """Get the motor state"""
+        return self.status.get('motor')
 
     @property
     def emergency_stop(self):
@@ -296,7 +301,8 @@ class Interface:
         def update_rpm_meter():
             """Update the RPM event counter"""
             LOG.debug('Photocell sensor activated')
-            self.meter_events.append(time.time())
+            if self.motor_working:
+                self.meter_events.append(time.time())
 
         def update_emergency_stop():
             """Check and update the emergency stop status"""
@@ -487,7 +493,7 @@ class Interface:
         # check the previous wedge positions and pump state
         pos_0075 = self.status.get('wedge_0075')
         pos_0005 = self.status.get('wedge_0005')
-        pump_working = self.pump
+        pump_working = self.pump_working
         # check 0005 wedge position:
         # find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
@@ -534,21 +540,27 @@ class Interface:
     def _start(self):
         """Starts the machine. When casting, check if it's running."""
         # check if the interface is already busy
-        LOG.info('Starting the machine...')
+        LOG.info('Machine start requested.')
+        casting = not self.punch_mode and not self.testing_mode
         if self.is_working or self.is_starting:
-            message = 'Cannot do that - the machine is already working.'
-            LOG.info(message)
-            raise librpi2caster.InterfaceBusy(message)
-        self.status.update(is_working=True, is_starting=True)
-        GPIO.error_led.value, GPIO.working_led.value = ON, ON
-        # reset the RPM counter
-        self.meter_events.clear()
-        # turn on the compressed air
-        self.air_control(ON)
-        if self.punch_mode or self.testing_mode:
+            msg = 'Cannot start the machine that is already working!'
+            LOG.warning(msg)
+            raise librpi2caster.InterfaceBusy(msg)
+        if not casting:
             # automatically reset the emergency stop if it was engaged
             self.emergency_stop_control(OFF)
-        else:
+        elif self.emergency_stop:
+            msg = 'Cannot start the machine while emergency stop is in action!'
+            LOG.warning(msg)
+            raise librpi2caster.MachineStopped(msg)
+
+        # continue with the start sequence
+        LOG.info('Starting the machine...')
+        self.status.update(is_working=True, is_starting=True)
+        GPIO.error_led.value, GPIO.working_led.value = ON, ON
+        # turn on the compressed air
+        self.air_control(ON)
+        if casting:
             # turn on the cooling water and motor, check the rotation
             # if MachineStopped is raised, it'll bubble up from here
             self.water_control(ON)
@@ -602,7 +614,7 @@ class Interface:
         """Start the pump."""
         # get the current 0075 wedge position and preserve it
         LOG.info('Pump start requested.')
-        if self.pump:
+        if self.pump_working:
             LOG.info('The pump was working, no need to start.')
         else:
             LOG.info('Starting the pump...')
@@ -632,7 +644,7 @@ class Interface:
                     time.sleep(0.05)
                 self.valves_control(OFF)
 
-        if self.testing_mode or not self.pump:
+        if self.testing_mode or not self.pump_working:
             return
 
         LOG.info('Stopping the pump...')
@@ -644,7 +656,7 @@ class Interface:
         error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
         # try to turn off the pump
-        while self.pump:
+        while self.pump_working:
             # try as long as necessary, minimum two combinations to be sure
             stop_sequence()
             stop_sequence()
