@@ -525,7 +525,7 @@ class Interface:
         """Starts the machine. When casting, check if it's running."""
         # check if the interface is already busy
         LOG.info('Starting the machine...')
-        if self.is_working:
+        if self.is_working or self.is_starting:
             message = 'Cannot do that - the machine is already working.'
             LOG.info(message)
             raise librpi2caster.InterfaceBusy(message)
