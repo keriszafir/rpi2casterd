@@ -22,7 +22,7 @@ from flask.globals import request
 from gpiozero import Button, LED, GPIOPinMissing, GPIOPinInUse
 
 LOG = logging.getLogger('rpi2casterd')
-DEBUG_MODE = True
+DEBUG_MODE = False
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 IN, OUT = ON, OFF = True, False
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
@@ -175,9 +175,10 @@ class Interface:
         # data structure to count photocell ON events for rpm meter
         self.meter_events = deque(maxlen=3)
         # initialize machine state
-        self.status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
-                           is_working=False, motor=OFF, signals=[],
-                           testing_mode=False, emergency_stop=False,
+        self.status = dict(wedge_0005=15, wedge_0075=15,
+                           valves=OFF, signals=[], testing_mode=False,
+                           is_working=False, motor_working=False,
+                           emergency_stop=False, pump_working=False,
                            is_stopping=False, is_starting=False)
         self.configure()
         self.hardware_setup()
@@ -241,7 +242,7 @@ class Interface:
     @property
     def motor_working(self):
         """Get the motor state"""
-        return self.status.get('motor')
+        return self.status.get('motor_working')
 
     @property
     def emergency_stop(self):
@@ -724,7 +725,7 @@ class Interface:
             output.on()
             time.sleep(0.2)
             output.off()
-        self.status.update(motor=new_state)
+        self.status.update(motor_working=new_state)
         self.meter_events.clear()
 
     @staticmethod
