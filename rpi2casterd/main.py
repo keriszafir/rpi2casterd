@@ -585,7 +585,8 @@ class Interface:
                 return
             # mark the interface as stopping so that any new calls
             # to stop the machine won't interfere with the stop process
-            self.status.update(is_stopping=True)
+            # if it was starting, then unset the flag so it can start again
+            self.status.update(is_stopping=True, is_starting=False)
             self._pump_stop()
             LOG.debug('Checking if the machine is working...')
             if self.is_working:
