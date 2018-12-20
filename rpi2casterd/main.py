@@ -22,7 +22,7 @@ from flask.globals import request
 from gpiozero import Button, LED, GPIOPinMissing, GPIOPinInUse
 
 LOG = logging.getLogger('rpi2casterd')
-DEBUG_MODE = False
+DEBUG_MODE = True
 ALL_METHODS = GET, PUT, POST, DELETE = 'GET', 'PUT', 'POST', 'DELETE'
 IN, OUT = ON, OFF = True, False
 OUTPUT_SIGNALS = tuple(['0075', 'S', '0005', *'ABCDEFGHIJKLMN',
@@ -517,7 +517,7 @@ class Interface:
             else:
                 pos_0075 = 15
 
-        self.status.update(pump=bool(pump_working),
+        self.status.update(pump_working=bool(pump_working),
                            wedge_0075=pos_0075, wedge_0005=pos_0005)
 
     @contextmanager
@@ -641,36 +641,40 @@ class Interface:
                 with suppress(AttributeError):
                     # suppress the error in case software is stopping the pump
                     # and GPIOs are being torn down
-                    while GPIO.sensor.value != ON:
+                    while not GPIO.sensor.value:
                         time.sleep(0.05)
                     self.valves_control(ON)
-                    while GPIO.sensor.value != OFF:
+                    while GPIO.sensor.value:
                         time.sleep(0.05)
                     self.valves_control(OFF)
 
-        if self.testing_mode or not self.pump_working:
+        # do this only in the casting and punching modes
+        if self.testing_mode:
             return
 
-        LOG.info('Stopping the pump...')
-        # don't change the current 0005 wedge position
-        wedge_0005 = self.status['wedge_0005']
-        pump_stop_signals = 'NJS0005{}'.format(wedge_0005)
-
-        # store previous LED states; light the red error LED only
-        error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
-        GPIO.error_led.value, GPIO.working_led.value = ON, OFF
-        # try to turn off the pump
         while self.pump_working:
+            LOG.info('Stopping the pump...')
+            # don't change the current 0005 wedge position
+            wedge_0005 = self.status['wedge_0005']
+            pump_stop_signals = 'NJS0005{}'.format(wedge_0005)
+
+            # store previous LED states; light the red error LED only
+            error_led, = GPIO.error_led.value
+            working_led = GPIO.working_led.value
+            GPIO.error_led.value, GPIO.working_led.value = ON, OFF
+            # try to turn off the pump
             with suppress(librpi2caster.MachineStopped):
-                # try as long as necessary, minimum two combinations to be sure
+                # try as long as necessary
+                # minimum two combinations to be sure
                 stop_sequence()
                 stop_sequence()
                 stop_sequence()
                 self._update_pump_and_wedges()
 
-        # finished; reset LEDs
-        GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
-        LOG.info('Pump successfully stopped.')
+            # finished; reset LEDs
+            GPIO.error_led.value = error_led
+            GPIO.working_led.value = working_led
+            LOG.info('Pump successfully stopped.')
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
