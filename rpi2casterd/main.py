@@ -236,7 +236,7 @@ class Interface:
     @property
     def pump_working(self):
         """Get the pump state"""
-        return self.status.get('pump')
+        return self.status.get('pump_working')
 
     @property
     def motor_working(self):
