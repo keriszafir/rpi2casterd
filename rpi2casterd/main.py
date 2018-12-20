@@ -499,7 +499,7 @@ class Interface:
         # check 0005 wedge position:
         # find the earliest row number or default to 15
         if found(['0005']) or found('NJ'):
-            pump_working = OFF
+            pump_working = False
             for pos in range(1, 15):
                 if str(pos) in self.signals:
                     pos_0005 = pos
@@ -511,7 +511,7 @@ class Interface:
         # find the earliest row number or default to 15
         if found(['0075']) or found('NK'):
             # 0075 always turns the pump on
-            pump_working = ON
+            pump_working = True
             for pos in range(1, 15):
                 if str(pos) in self.signals:
                     pos_0075 = pos
@@ -519,7 +519,7 @@ class Interface:
             else:
                 pos_0075 = 15
 
-        self.status.update(pump_working=bool(pump_working),
+        self.status.update(pump_working=pump_working,
                            wedge_0075=pos_0075, wedge_0005=pos_0005)
 
     @contextmanager
