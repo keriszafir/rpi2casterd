@@ -587,6 +587,9 @@ class Interface:
             # to stop the machine won't interfere with the stop process
             # if it was starting, then unset the flag so it can start again
             self.status.update(is_stopping=True, is_starting=False)
+            # always turn off the red/green/orange LED
+            GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
+            # stop the pump first
             self._pump_stop()
             LOG.debug('Checking if the machine is working...')
             if self.is_working:
@@ -610,8 +613,6 @@ class Interface:
             # reset the stopping flag
             self.status.update(is_stopping=False)
             self._stop()
-        # always turn off the red/green/orange LED
-        GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
 
     def _pump_start(self):
         """Start the pump."""
