@@ -177,7 +177,8 @@ class Interface:
         # initialize machine state
         self.status = dict(wedge_0005=15, wedge_0075=15, valves=OFF,
                            working=False, motor=OFF, signals=[],
-                           testing_mode=False, emergency_stop=False)
+                           testing_mode=False, emergency_stop=False,
+                           is_stopping=False, is_starting=False)
         self.configure()
         self.hardware_setup()
 
@@ -289,9 +290,9 @@ class Interface:
 
         def update_emergency_stop():
             """Check and update the emergency stop status"""
-            LOG.error('Emergency stop button pressed!')
-            self.emergency_stop_control(ON)
-            self._stop()
+            LOG.warning('Emergency stop button pressed!')
+            with suppress(librpi2caster.MachineStopped):
+                self.emergency_stop_control(ON)
 
         # register callbacks
         GPIO.sensor.when_pressed = update_rpm_meter
@@ -528,7 +529,7 @@ class Interface:
             message = 'Cannot do that - the machine is already working.'
             LOG.info(message)
             raise librpi2caster.InterfaceBusy(message)
-        self.status.update(working=True)
+        self.status.update(working=True, is_starting=True)
         GPIO.error_led.value, GPIO.working_led.value = ON, ON
         # reset the RPM counter
         self.meter_events.clear()
@@ -549,12 +550,18 @@ class Interface:
                     self._wait_for_sensor(ON, timeout=timeout)
                     self._wait_for_sensor(OFF, timeout=timeout)
         LOG.info('Machine started.')
-        # properly initialized => mark it as working
+        self.status.update(is_starting=False)
         GPIO.error_led.value = OFF
 
     def _stop(self):
         """Stop the machine, making sure that the pump is disengaged."""
         try:
+            if self.status.get('is_stopping'):
+                LOG.info('The machine is already stopping...')
+                return
+            # mark the interface as stopping so that any new calls
+            # to stop the machine won't interfere with the stop process
+            self.status.update(is_stopping=True)
             self._pump_stop()
             LOG.debug('Checking if the machine is working...')
             if self.is_working:
@@ -568,11 +575,15 @@ class Interface:
                     self.water_control(OFF)
                 # turn off the machine air supply
                 self.air_control(OFF)
-                # release the interface so others can claim it
-                self.status.update(working=False, testing_mode=False)
                 LOG.info('Machine stopped.')
+            # stop was successful or not necessary at all
+            # release the interface so others can claim it
+            self.status.update(working=False, is_stopping=False,
+                               testing_mode=False)
         except librpi2caster.MachineStopped:
             # if emergency stop happens, repeat recursively
+            # reset the stopping flag
+            self.status.update(is_stopping=False)
             self._stop()
         # always turn off the red/green/orange LED
         GPIO.error_led.value, GPIO.working_led.value = OFF, OFF
@@ -636,9 +647,12 @@ class Interface:
 
     def emergency_stop_control(self, state):
         """Emergency stop: state=ON to activate, OFF to clear"""
+        self.status.update(emergency_stop=state)
         msg = 'Emergency stop {}'.format('activated!' if state else 'cleared.')
         LOG.warning(msg)
-        self.status.update(emergency_stop=state)
+        if state:
+            self._stop()
+            raise librpi2caster.MachineStopped
 
     def machine_control(self, state):
         """Machine and interface control.
