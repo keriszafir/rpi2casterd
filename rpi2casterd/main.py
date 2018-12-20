@@ -628,6 +628,7 @@ class Interface:
         In case of failure, repeat."""
         def stop_sequence():
             """send signals depending on casting/punching mode"""
+            self.signas = pump_stop_signals
             if self.punch_mode:
                 with suppress(librpi2caster.InterfaceBusy):
                     self._start()
@@ -653,7 +654,7 @@ class Interface:
         LOG.info('Stopping the pump...')
         # don't change the current 0005 wedge position
         wedge_0005 = self.status['wedge_0005']
-        self.signals = 'NJS0005{}'.format(wedge_0005)
+        pump_stop_signals = 'NJS0005{}'.format(wedge_0005)
 
         # store previous LED states; light the red error LED only
         error_led, working_led = GPIO.error_led.value, GPIO.working_led.value
