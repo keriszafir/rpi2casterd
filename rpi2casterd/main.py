@@ -438,7 +438,8 @@ class Interface:
         app.route('/config', methods=ALL_METHODS)(config)
         app.route('/signals', methods=ALL_METHODS)(signals)
         app.route('/<device>', methods=ALL_METHODS)(control)
-        app.run(self.config.get('address'), self.config.get('port'))
+        app.run(self.config.get('address'), self.config.get('port'),
+                debug=DEBUG_MODE)
 
     def _wait_for_sensor(self, new_state, timeout=0):
         """Wait until the machine cycle sensor changes its state
