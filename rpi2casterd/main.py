@@ -637,12 +637,15 @@ class Interface:
                 self.valves_control(OFF)
                 time.sleep(self.config['punching_off_time'])
             else:
-                while GPIO.sensor.value != ON:
-                    time.sleep(0.05)
-                self.valves_control(ON)
-                while GPIO.sensor.value != OFF:
-                    time.sleep(0.05)
-                self.valves_control(OFF)
+                with suppress(AttributeError):
+                    # suppress the error in case software is stopping the pump
+                    # and GPIOs are being torn down
+                    while GPIO.sensor.value != ON:
+                        time.sleep(0.05)
+                    self.valves_control(ON)
+                    while GPIO.sensor.value != OFF:
+                        time.sleep(0.05)
+                    self.valves_control(OFF)
 
         if self.testing_mode or not self.pump_working:
             return
@@ -657,11 +660,12 @@ class Interface:
         GPIO.error_led.value, GPIO.working_led.value = ON, OFF
         # try to turn off the pump
         while self.pump_working:
-            # try as long as necessary, minimum two combinations to be sure
-            stop_sequence()
-            stop_sequence()
-            stop_sequence()
-            self._update_pump_and_wedges()
+            with suppress(librpi2caster.MachineStopped):
+                # try as long as necessary, minimum two combinations to be sure
+                stop_sequence()
+                stop_sequence()
+                stop_sequence()
+                self._update_pump_and_wedges()
 
         # finished; reset LEDs
         GPIO.error_led.value, GPIO.working_led.value = error_led, working_led
