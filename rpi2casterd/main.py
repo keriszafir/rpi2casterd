@@ -632,7 +632,7 @@ class Interface:
                 self.valves_control(OFF)
 
         # do this only in the casting and punching modes
-        if self.testing_mode:
+        if self.testing_mode or not self.pump_working:
             return
 
         LOG.info('Stopping the pump...')
@@ -649,9 +649,8 @@ class Interface:
         # finished; reset LEDs
         GPIO.error_led.value = error_led
         GPIO.working_led.value = working_led
-        # repeat recursively if stop was unsuccessful
-        if self.pump_working:
-            self._pump_stop()
+        # repeat recursively in case stop was unsuccessful
+        self._pump_stop()
         LOG.info('Pump successfully stopped.')
 
     def _check_emergency_stop(self):
