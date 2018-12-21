@@ -9,243 +9,191 @@ It is supposed to run on a Raspberry Pi (any model) with an output expander base
 MCP23017 chips to provide 32 additional outputs. These are connected to solenoid valves,
 which in turn send the pneumatic signals to a Monotype composition caster or tape punch.
 
-This driver uses a ``RPi.GPIO`` library for GPIO control, 
+The program uses ``Flask`` to provide a rudimentary JSON API for caster control.
 
-There are several available output control backends:
+``gpiozero`` library is used for GPIO control, with RPi.GPIO as a preferable backend. 
+
+There are several available MCP23017 control backends:
 
 1. SMBus (via ``smbus-cffi`` or ``smbus2`` package),
 2. ``WiringPi`` library.
 
-When ready to use, the daemon lights a LED on a specified "ready LED" GPIO.
-An additional functionality of this daemon is control over the power and reboot buttons.
-After one of these buttons is held for 2 seconds, the LED flashes and the shutdown or reboot
-procedure begins.
+
+The daemon also controls several GPIO pins:
+
+1. `ready LED (green)` - when lit, the control device and software is ready to use.
+2. `working LED (green)` and `error LED (red)`, typically a dual-color common cathode LED, indicates the machine state - 
+   green when the machine is working, red when the machine is stopping the pump, and orange when the machine is starting.
+3. `motor start` and `motor stop` - pulse outputs for start/stop relays, connected with the original AllenWest motor starter 
+   (their use is optional, more of a convenience).
+4. `air` and `water` - for controlling air solenoid valve (prevents unnecessary air use when the machine is not working) 
+   and cooling water valve/pump (ditto with water). Like motor control, this is more of a 'deluxe' feature and is not 
+   necessary for caster operation.
+5. `sensor` (photocell, e.g. TCST2103) input for getting the information about the machine cycle phase. When the sensor is 
+   going ON, the air is fed into the machine; when the sensor is going OFF, the air is cut off and the control daemon 
+   ends the signals sending sequence. This sensor is necessary for caster operation. Punching is timer-driven 
+   and no sensor is needed.
+6. `mode sense` input - when grounded, the interface works in the casting mode; when lifted (pulled up to 3V3), 
+   the interface works in the punching mode. This input is typically connected with a 9-pin D-sub connector for the sensor, 
+   with a jumper to the ground in the plug.
+7. `shutdown` and `reboot buttons` - after one of these is held for 2 seconds, the LED flashes and the shutdown or reboot
+   procedure begins.
+8. `emergency stop button` - stops the machine as soon as possible and marks the emergency stop as activated; when that happens, 
+   the client software has to clear the emergency stop first in order to be able to use the machine. 
+
 
 The program uses ``Flask`` to provide a rudimentary JSON API for caster control.
-It accepts POST requests to start and stop the machine, turn the valves on and off,
-change the operation and row 16 addressing modes and send specified signals to the caster or perforator.
-GET requests are used for obtaining the interface's state current, default and supported modes,
-configuration, water/air/motor/pump/machine state, rotation speed and current justification wedge positions.
-
-Initializing
-------------
-
-When starting to work with the interface, change its mode of operation or row 16 addressing.
-
-If a new operation or row 16 addressing mode is unsupported by the interface's configuration
-(for example, the device is meant for being installed on a caster without any row 16 attachments),
-the ``modes`` request will get an error message, stating that a mode we want to use is not supported.
-
-The ``casting`` operation mode limits the choice of row 16 addressing modes to the supported modes only,
-whereas the ``punching`` mode can use all row 16 addressing modes.
 
 Starting
 --------
 
 The interface needs to be started up in order to work. The startup procedure ensures that:
 
-1. the interface is not busy - has not been claimed by any other client,
+1. the interface is not busy, not stopping and not starting - has not been claimed by any other client,
 2. air and (for casting only) water and motor is turned on, if the hardware supports this,
-3. (for casting) the machine is actually turning,
-4. an "interface in use" LED (green) is turned on, if hardware supports this,
+3. (for casting) the machine is actually turning; during this phase, the state LED lights up orange,
+4. after the starting sequence is successfully finished, the state LED lights up green,
 5. the interface will stay busy until released by the ``stop`` method.
+
+Machine is started with a request from the client software. See the API section for details.
+
 
 Stopping
 --------
 
 Stopping the interface ensures that:
 
-1. if the pump is working, it is stopped (see the pump control section),
+1. if the pump is working, it is stopped (see the pump control section); during this phase the state LED lights up red,
 2. air and (for casting) water and motor is turned off, if hardware supports this,
-3. the "interface in use" LED is turned off, if hardware supports this,
-4. the interface is released for the future clients to claim.
+3. the state  LED is turned off, if hardware supports this,
+4. the `testing_mode` flag is set to False,
+5. the interface is released for the future clients to claim.
 
-Stopping is done by a request to ``/machine``, or a ``MachineStopped`` exception occurring in the program.
-This happens if the machine has been waiting for the signal from the cycle sensor for too long, or was stopped
-with an emergency stop button (for those control computers which support it).
+Machine is stopped when called by the client software, when the machine has been stalling (waiting for the signal 
+from the cycle sensor for too long), or when emergency stop happens because of button press or client software request.
+
 
 Pump control
 ------------
 
-The ``/pump`` endpoint gets or sets the status of the Monotype caster's pump.
+The software turns the pump on (sending ``NKS 0075`` + current 0075 justifying wedge position) or off.
+Pump switch-off is done whenever the machine stops and the pump is marked as working. This ensures that after re-start, 
+the pump will stay stopped.
 
 During the pump switch-off procedure, an "alarm" LED (red) is lit to prompt the operator to turh the
-machine's main shaft a few times. The interface will then send a ``NJS+0005+X`` signals combination, where X is the
-current 0005 justification wedge's position. This way, stopping the pump does not reset the wedge position.
+machine's main shaft a few times. The interface will then send a ``NJS 0005`` + current 0005 justifying wedge position. 
+This way, stopping the pump does not change the wedge position.
 
-The pump switch-on procedure sends the ``NKS+0075+Y`` combination, where Y is the current 0075 justification
-wedge's position.
 
 Motor control
 -------------
 
-The ``/motor`` endpoint gets the status of the caster's motor.
-``PUT``, ``POST`` or ``DELETE`` requests change its state.
-If the interface's configuration does not support motor relay, the server replies with ``501 Not Implemented``.
+When starting in the casting mode, the software activates the ``motor_start`` GPIO for a fraction of a second.
+The GPIO can be coupled with a NO SPST relay connected with the original AllenWest electromagnetic starter.
+Use a relay rated for at least 400V AC if your caster is wired for three-phase power (common in continental Europe).
+The relay should be connected to the contacts marked "1" and "2" on the motor starter.
+
+Similarly, when stopping in the casting mode, the software activates the ``motor_stop`` GPIO. This can be coupled 
+with a NC SPST relay that breaks the current flow through the starter's coil. The relay should be connected instead 
+of a jumper between one of the live wires and the contact marked as "2".
+
+
+Air and water control
+---------------------
+
+The daemon can also control a solenoid valve to enable or disable air flow when the machine is working or stopped.
+Air control works in all operation modes (casting, punching and testing).
+
+Water control can be used in the casting mode for controlling a pump or solenoid valve for cooling water flow.
 
 
 Sending signals
 ---------------
 
-The most important part of the controller.
+Based on the caster's current operation mode, signals are modified or not:
 
-Based on the caster's current testing/operation mode and row 16 addressing mode, the signals are changed
-in order to activate the mechanisms such as ribbon advance and row 16 addressing attachment.
+1. testing mode ensures that signals 1...14, A...N, 0075, S, 0005, O15 are sent to the machine as they are received
+2. punching mode ensures that a combined signal O+15 is present only when less than 2 signals are received
+3. casting mode ensures that the O15 signal is ommitted
 
-The signals can be sent for repeated casting/punching.
-
-Sending signals can take place only when the interface has been previously started and claimed as busy;
+Sending the signals can take place only when the interface has been previously started and claimed as busy;
 otherwise, ``InterfaceNotStarted`` is raised in the casting mode, and the startup is done automatically
 in the punching and testing modes.
 
-If sending no signals, the valves are closed.
+The daemon behaves differently depending on the operation mode:
 
-
-Operation modes
-_______________
-
-The interface / driver can operate in different modes, denoted by the ``mode`` parameter
-in the ``modes`` POST request's JSON payload. Depending on the mode, the behavior and signals sent vary.
 
 casting
-~~~~~~~
+_______
 
-Signals O and 15 are stripped, as they are the signals the caster defaults to
-if no signal in the ribbon is found.
-When the machine is working, the interface driver:
-
-1. waits for a machine cycle sensor (photodiode) going ON,
-2. activates specified valves,
-3. waits until the cycle sensor goes OFF,
-4. checks the current pump status,
-5. turns all valves off,
-6. returns a reply to the request, allowing the client to cast the next combination.
+1. wait for a machine cycle sensor to turn ON,
+2. activate the valves for specified signals,
+3. wait until the cycle sensor goes OFF,
+4. turn all the valves off,
+5. check the pump state and justifying wedge positions, and update the current state,
+6. return a reply to the request, allowing the client to cast the next combination.
 
 However, a machine sometimes stops during casting (e.g. when the operator sees a lead squirt
-and has to stop immediately to prevent damage). In this case, the driver will check whether
-the pump is working, and if this is the case, run a full signals send cycle with a pump stop
-combination (NJS 0005 0075), which works both with unit-adding system on and off.
-After the pump stop procedure is completed, the interface replies with an error message.
+and has to stop immediately to prevent damage). In case of emergency stop, the machine is stopped immediately
+and the client software gets an error reply to the send request.
+
 
 punching
-~~~~~~~~
+________
 
-This mode modifies the signals, so that at least two of them are always present in a combination.
-This way the pneumatic perforator from the Monotype keyboard can advance the ribbon.
-When less than two signals are present, the driver adds an extra O+15 signal driven by the 32nd valve
-(not used when casting). The compressed air from this valve is routed to O and 15 blind punches,
-which make no perforation in the ribbon, but trigger the ribbon advance mechanism.
-
-This mode is fully automatic and driven by a configureble timer.
-The control sequence is as follows:
+This mode is fully automatic and driven by a configureble timer:
 
 1. turn the valves on,
 2. wait time_on for punches to go up,
 3. turn the valves off,
 4. wait time_off for punches to come back down,
-5. return a success reply to the request.
+5. check the pump state and justifying wedge positions, and update the current state,
+6. return a success reply to the request.
 
 
-Testing mode
-------------
+testing
+_______
 
-All signals are sent as specified. ``O`` and ``15`` are converted to the combined ``O15`` signal
-and present on the output. Row 16 addressing modifications are also done, based on mode. 
-
-The driver closes any open valves, then turns on the valves corresponding to the signals
-found in request, and returns a success message.
+The software just turns off the valves, then turns them on, sending the specified signal combination.
 
 
-Additional row 16 addressing modes
-----------------------------------
+REST API documentation
+======================
 
-A ``row16_mode`` parameter in the ``modes`` POST request JSON sets the interface's
-row 16 addressing mode. Once the interface is working, this mode will not change.
-If ``mode`` is ``casting``, the choice of ``row16_mode`` is limited by the
-``supported_row16_modes`` configuration parameters. On the other hands, the ``testing``,
-``punching`` and ``manual punching`` modes can operate with all four row 16 addressing modes.
-Depending on the selection, the signals sent to valves will be changed to fit the control system in use.
+The API is typically accessed at ``http://[address]:[port]`` (typically ``23017``, as in MCP23017). 
+Several endpoints are available:
 
+``/`` - status: ``GET``: reads and ``POST`` changes the status, which is used mostly for setting the temporary ``testing_mode`` flag.
 
-Why all this?
-~~~~~~~~~~~~~
+``/config`` - configuration: `GET` reads and `POST` changes the configuration
 
-The typical Monotype matrix case contained 15 rows and 15 or 17 columns.
-In 1950s and 1960s a further extension by an additional row was introduced,
-which allowed more flexibility in defining the matrix case layouts, and
-made it possible to contain more characters in the diecase.
-Some Monotype casters (especially from 1960s and later) are equipped with special
-attachments (either from the very beginning, or retrofitted) for addressing
-the additional row. There were three such systems.
+``/machine`` - machine start/stop/state:
+ 
+``GET`` reads the state, ``PUT`` turns the machine on, ``DELETE`` turns the machine off, and ``POST`` turns it on or off
+depending on the JSON data in the request (``{state: true}`` for starting, ``{state: false}`` for stopping).
+The reply can either be ``{success: true, active: [true/false]}`` if successful, or ``{success: false, error_code: [EC], error_name: [EN]}``
+if exception was raised. Error codes and names:
 
+1. ``0: The machine was abnormally stopped.`` in case of emergency stop or machine stalling,
+2. ``3: This interface was started and is already in use. If this is not the case, restart the interface.`` if the interface has already
+   been claimed as busy,
 
-off
-~~~
+``/motor``, ``/air``, ``/water``, ``/pump``, ``valves`` - motor, air, water, pump and solenoid valves checking/control. The verbs work as above.
 
-value: ``False``
+``/emergency_stop``: 
 
-This means that a sort will be cast from row 15 instead of 16.
-No modification to signals apart from replacing row 16 with 15.
+``GET`` gets the current state, ``PUT`` (or ``POST`` with ``{state: true}`` JSON data) activates the emergency stop,
+``DELETE`` (or ``POST`` with ``{state: false}`` JSON data) clears the emergency stop state, allowing the machine to start.
+When emergency stop is activated, the server replies with ``{success: false, error_code: 0, message: 'The machine was abnormally stopped.'}``
 
+``/signals``: 
 
-HMN
-~~~
+``GET``: gets the last signals sent (unless the machine was stopped, which clears the signals),
+``POST`` or ``PUT`` with ``{signals: [sig1, sig2...], timeout: x}`` (timeout is optional and overrides the default machine stalling timeout)
+sends the specified signals, and ``DELETE`` turns off the valves. Emergency stop events are tracked and whenever the emergency stop was triggered,
+the server will reply with an error message.
 
-The earliest system, devised by one of Monotype's customers.
-It is based on combined signals (similar to N+I, N+L addressing of two additional columns).
-For rows 1...15 no modifications are done.
-For row 16, additional signals are introduced based on column:
+Possible error replies:
 
-1. NI, NL, M - add H - HNI, HNL, HM
-2. H - add N - HN
-3. N - add M - MN
-4. O (no signal) - add HMN
-5. {ABCDEFGIJKL} - add HM - HM{ABCDEFGIJKL}
-
-
-KMN
-~~~
-
-Devised by Monotype and similar to HMN.
-The extra signals are a little bit different.
-
-1. NI, NL, M - add K - KNI, KNL, KM
-2. K - add N - KN
-3. N - add M - KM
-4. O (no signal) - add KMN
-5. {ABCDEFGHIJL} - add KM - KM{ABCDEFGHIJL}
-
-
-unit shift
-~~~~~~~~~~
-
-Introduced by Monotype in 1963 and standard on all machines soon after.
-When the attachment is activated, a signal D is re-routed to an additional pin on
-the front pin block, which boosts the left-right (rows) matrix case draw rod,
-so that its end goes into an upper socket in the special matrix jaw. This socket is offset
-by 0.2" to the left, allowing the matrix case to go a full row farther.
-
-Column D addressing is done with a combined E+F signals instead.
-So:
-
-1. replace D with EF in the original combination,
-2. add D if addressing the row 16.
-
-
-Advanced features
------------------
-
-The Raspberry Pi based controller can be coupled with more devices than the basic functionality requires.
-
-The program supports configuring multiple control interfaces (i.e. sensor + valve sets).
-
-Apart from getting the machine cycle sensor state and sending signals to solenoid valves,
-the program can start and stop the machine's motor, control additional water and air cutoff valves,
-use an emergency stop button to stop the machine when something bad happens, and light a LED
-when the controller is trying to stop the caster's pump.
-
-
-API documentation
-=================
-
-to be added later...
+1. ``0: The machine was abnormally stopped.`` in case of emergency stop or machine stalling,
+2. ``4: Trying to cast or punch with an interface that is not started.`` (only in casting mode, as punching/testing starts the interface automatically)
