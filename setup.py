@@ -2,9 +2,9 @@
 from setuptools import setup
 
 __version__ = '2.5.12'
-__author__ = 'Christophe Catherine Slychan'
-__author_email__ = 'krzysztof.slychan@gmail.com'
-__github_url__ = 'http://github.com/elegantandrogyne/rpi2casterd'
+__author__ = 'Keri Szafir'
+__author_email__ = 'keri.szafir@gmail.com'
+__github_url__ = 'http://github.com/keriszafir/rpi2casterd'
 __dependencies__ = ['gpiozero >= 1.4.0', 'Flask >= 1.0.2',
                     'librpi2caster >= 2.0']
 
